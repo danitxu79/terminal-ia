@@ -1,12 +1,15 @@
 package main
 
 import (
-	// "bufio" // Ya no lo necesitamos
+	// "bufio" // Ya no se usa
+	// "bytes" // Ya no se usa
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"net/http" // ¡Importante!
+	"net/url"  // ¡Importante!
 	"os"
 	"os/exec"
 	"os/signal"
@@ -14,7 +17,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/api" // --- ¡LÍNEA CORREGIDA! ---
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/lucasb-eyer/go-colorful"
@@ -22,7 +25,29 @@ import (
 	"github.com/peterh/liner"
 )
 
-// --- Variables Globales de Estilo ---
+// --- ¡NUEVO! Structs para la API de wttr.in ---
+type WttrWeatherDesc struct {
+	Value string `json:"value"`
+}
+type WttrCurrentCondition struct {
+	Temp_C      string            `json:"temp_C"`
+	FeelsLikeC  string            `json:"FeelsLikeC"`
+	WeatherDesc []WttrWeatherDesc `json:"weatherDesc"`
+}
+type WttrResponse struct {
+	CurrentCondition []WttrCurrentCondition `json:"current_condition"`
+	NearestArea []struct {
+		AreaName []struct {
+			Value string `json:"value"`
+		} `json:"areaName"`
+		Country []struct {
+			Value string `json:"value"`
+		} `json:"country"`
+	} `json:"nearest_area"`
+}
+
+
+// --- Variables Globales de Estilo (Sin cambios) ---
 var (
 	logoMap    map[string][]string
 	colorMap   map[string][]string
@@ -115,18 +140,19 @@ func printLogo(modelName string) {
 func printHeader() {
 	fmt.Println()
 	// --- ¡CAMBIO DE VERSIÓN AQUÍ! ---
-	fmt.Println(styleHeader.Render("  Terminal Aumentada por IA (v13.3)"))
+	fmt.Println(styleHeader.Render("  Terminal Aumentada por IA (v17.2)"))
 	fmt.Println(styleHeader.Render("  Creado por: Daniel Serrano Armenta <dani.eus79@gmail.com>"))
 	fmt.Println(styleHeader.Render("  Copyright (c) 2025 Daniel Serrano Armenta. Ver LICENSE para más detalles."))
 	fmt.Println(styleHeader.Render("  Github: https://github.com/danitxu79/terminal-ia"))
 }
 
-// printHelp (Sin cambios)
+// --- printHelp (¡ACTUALIZADO!) ---
 func printHelp() {
 	fmt.Println()
 	fmt.Println(cSystem("--- Ayuda: Comandos Disponibles ---"))
 	fmt.Println(cPrompt("  /<petición> ") + cIA("- Pide un comando de shell (ej. /listar archivos .go)"))
 	fmt.Println(cPrompt("  /chat <pregunta> ") + cIA("- Inicia una conversación de chat (ej. /chat ¿qué es Docker?)"))
+	fmt.Println(cPrompt("  /tiempo <lugar>  ") + cIA("- Consulta el tiempo (sin API key) (ej. /tiempo Madrid)"))
 	fmt.Println(cPrompt("  /model       ") + cIA("- Vuelve a mostrar el selector de modelos."))
 	fmt.Println(cPrompt("  /ask         ") + cIA("- Desactiva el modo 'auto' y vuelve a pedir confirmación."))
 	fmt.Println(cPrompt("  /help        ") + cIA("- Muestra este menú de ayuda."))
@@ -135,7 +161,6 @@ func printHelp() {
 	fmt.Println(cSystem("------------------------------------"))
 	fmt.Println()
 }
-
 
 // warmUpModel (Sin cambios)
 func warmUpModel(client *api.Client, modelName string) {
@@ -151,8 +176,7 @@ func warmUpModel(client *api.Client, modelName string) {
 	}
 }
 
-// --- chooseModel (¡ACTUALIZADO!) ---
-// Recibe el 'state' de liner y lo usa para leer la entrada
+// chooseModel (Sin cambios)
 func chooseModel(client *api.Client, state *liner.State) string {
 	fmt.Println(cSystem("Consultando modelos de Ollama disponibles..."))
 
@@ -187,7 +211,6 @@ func chooseModel(client *api.Client, state *liner.State) string {
 		if err != nil || choice < 1 || choice > len(resp.Models) {
 			fmt.Println(cError("Selección inválida. Introduce un número de la lista."))
 		} else {
-			// Añade la selección al historial (pero la borraremos en main)
 			state.AppendHistory(input)
 			break
 		}
@@ -224,9 +247,6 @@ func main() {
 
 	var alwaysExecute bool = false
 	var isFirstLoop bool = true
-
-	// --- LÍNEA INCORRECTA ELIMINADA ---
-	// state.DeleteHistory(0) // Esta línea daba error
 
 	for {
 		if isFirstLoop {
@@ -307,9 +327,6 @@ func main() {
 			printHeader()
 			fmt.Println(cSystem("\n  Consejo: Escribe /help para ver todos los comandos."))
 			isFirstLoop = true
-			// --- LÍNEAS INCORRECTAS ELIMINADAS ---
-			// state.DeleteHistory(state.HistorySize() - 1)
-			// state.DeleteHistory(state.HistorySize() - 1)
 			continue
 
 		} else if input == "/ask" {
@@ -321,6 +338,16 @@ func main() {
 		} else if input == "/help" {
 			printHelp()
 			continue
+
+		} else if strings.HasPrefix(input, "/tiempo ") { // --- ¡NUEVO! ---
+			prompt := strings.TrimPrefix(input, "/tiempo ")
+			prompt = strings.TrimSpace(prompt)
+			if prompt == "" {
+				fmt.Println(cError("IA> Petición de tiempo vacía. Escribe /tiempo <lugar>."))
+				fmt.Println()
+				continue
+			}
+			handleWeatherCommand(client, selectedModel, prompt)
 
 		} else if strings.HasPrefix(input, "/chat ") {
 			prompt := strings.TrimPrefix(input, "/chat ")
@@ -381,6 +408,119 @@ func sanitizeIACommand(rawCmd string) string {
 	}
 	return cmd
 }
+
+// --- ¡NUEVA FUNCIÓN DE TIEMPO! ---
+// (Reemplaza a 'handleWebCommand')
+func handleWeatherCommand(client *api.Client, modelName string, location string) {
+	fmt.Println(cIA("IA> Consultando el tiempo...") + cSystem(" (Usando wttr.in)"))
+
+	// 1. Preparar la URL de wttr.in (pide 1 día de previsión en formato JSON)
+	// Usamos http:// para evitar problemas de certificados
+	endpoint := fmt.Sprintf("http://wttr.in/%s?format=j1", url.QueryEscape(location))
+
+	// 2. Realizar la petición HTTP
+	httpClient := &http.Client{}
+	req, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		fmt.Println(cError(fmt.Sprintf("\nError al crear la petición web: %v", err)))
+		return
+	}
+	// wttr.in requiere un User-Agent
+	req.Header.Set("User-Agent", "terminal-ia-go-client")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		fmt.Println(cError(fmt.Sprintf("\nError al llamar a la API de wttr.in: %v", err)))
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		fmt.Println(cError(fmt.Sprintf("\nError de la API de wttr.in (código %d). ¿Localización correcta?", resp.StatusCode)))
+		return
+	}
+
+	// 3. Leer y "Aumentar" (Preparar el contexto para Ollama)
+	var wttrResp WttrResponse
+	if err := json.NewDecoder(resp.Body).Decode(&wttrResp); err != nil {
+		fmt.Println(cError(fmt.Sprintf("\nError al decodificar la respuesta de wttr.in: %v", err)))
+		return
+	}
+
+	// 4. Comprobar si obtuvimos una respuesta
+	if len(wttrResp.CurrentCondition) == 0 {
+		fmt.Println(cError("\nLo siento, wttr.in no pudo encontrar esa localización."))
+		fmt.Println()
+		return
+	}
+
+	// 5. Construir el contexto
+	current := wttrResp.CurrentCondition[0]
+	desc := ""
+	if len(current.WeatherDesc) > 0 {
+		desc = current.WeatherDesc[0].Value
+	}
+
+	locName := location
+	if len(wttrResp.NearestArea) > 0 && len(wttrResp.NearestArea[0].AreaName) > 0 {
+		locName = wttrResp.NearestArea[0].AreaName[0].Value
+		if len(wttrResp.NearestArea[0].Country) > 0 {
+			locName += ", " + wttrResp.NearestArea[0].Country[0].Value
+		}
+	}
+
+
+	contextSnippet := fmt.Sprintf(
+		"Contexto del tiempo para %s:\nTemperatura: %s°C\nSensación térmica: %s°C\nDescripción: %s\n",
+		locName,
+		current.Temp_C,
+		current.FeelsLikeC,
+		desc,
+	)
+
+	// 6. Generar (Llamar a Ollama con el contexto)
+	systemPrompt := "Eres un asistente de IA. Responde a la 'Pregunta del Usuario' en español, de forma concisa y amigable, basándote únicamente en el 'Contexto del tiempo' proporcionado."
+	fullPrompt := fmt.Sprintf("%s\n\n%s\n\nPregunta del Usuario: ¿Qué tiempo hace en %s?", systemPrompt, contextSnippet, location)
+
+	fmt.Println(cIA("IA> Generando respuesta..."))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT)
+	go func() {
+		<-sigChan
+		cancel()
+	}()
+	defer signal.Stop(sigChan)
+
+	stream := true
+	reqOllama := &api.GenerateRequest{
+		Model:  modelName,
+		Prompt: fullPrompt,
+		Stream: &stream,
+	}
+
+	firstChunk := true
+	streamHandler := func(r api.GenerateResponse) error {
+		if firstChunk {
+			fmt.Print("\r" + cIA("IA: ") + "    \r")
+			firstChunk = false
+		}
+		fmt.Print(r.Response)
+		return nil
+	}
+
+	err = client.Generate(ctx, reqOllama, streamHandler)
+	if err != nil {
+		if err == context.Canceled {
+			fmt.Print(cError("\n[Stream cancelado]"))
+		} else {
+			fmt.Println(cError(fmt.Sprintf("\nError al generar respuesta de chat: %v", err)))
+		}
+	}
+	fmt.Println()
+}
+
 
 // handleChatCommand (Sin cambios)
 func handleChatCommand(client *api.Client, modelName string, userPrompt string) {
