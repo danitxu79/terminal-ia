@@ -16,7 +16,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"   // Para el logo y header
 	"github.com/lucasb-eyer/go-colorful" // Para el degradado
-	"github.com/fatih/color"             // Para el resto de la UI
+	"github.com/fatih/color"             // Para la UI
+	"github.com/peterh/liner"            // Para el historial
 )
 
 // --- Variables Globales de Estilo ---
@@ -49,10 +50,10 @@ func loadLogos() {
 	defer file.Close()
 	bytes, err := io.ReadAll(file)
 	if err != nil {
-		log.Fatal(cError("Error fatal: No se pudo leer logos.json: %v", err))
+		log.Fatal(cError(fmt.Sprintf("Error fatal: No se pudo leer logos.json: %v", err)))
 	}
 	if err := json.Unmarshal(bytes, &logoMap); err != nil {
-		log.Fatal(cError("Error fatal: No se pudo parsear logos.json: %v", err))
+		log.Fatal(cError(fmt.Sprintf("Error fatal: No se pudo parsear logos.json: %v", err)))
 	}
 }
 
@@ -108,17 +109,17 @@ func printLogo(modelName string) {
 	}
 }
 
-// printHeader (Sin cambios)
+// --- printHeader (¡ACTUALIZADO!) ---
 func printHeader() {
 	fmt.Println()
-	fmt.Println(styleHeader.Render("  Terminal Aumentada por IA (v0.1)"))
+	// --- ¡CAMBIO DE VERSIÓN AQUÍ! ---
+	fmt.Println(styleHeader.Render("  Terminal Aumentada por IA (v11.2)"))
 	fmt.Println(styleHeader.Render("  Creado por: Daniel Serrano Armenta <dani.eus79@gmail.com>"))
 	fmt.Println(styleHeader.Render("  Copyright (c) 2025 Daniel Serrano Armenta. Ver LICENSE para más detalles."))
 	fmt.Println(styleHeader.Render("  Github: https://github.com/danitxu79/terminal-ia"))
 }
 
-// --- ¡NUEVA FUNCIÓN DE AYUDA! ---
-// Imprime la lista de comandos disponibles
+// printHelp (Sin cambios)
 func printHelp() {
 	fmt.Println()
 	fmt.Println(cSystem("--- Ayuda: Comandos Disponibles ---"))
@@ -142,27 +143,32 @@ func warmUpModel(client *api.Client, modelName string) {
 	}
 	responseHandler := func(r api.GenerateResponse) error { return nil }
 	if err := client.Generate(ctx, req, responseHandler); err != nil {
-		fmt.Fprintln(os.Stderr, cError("Advertencia: Fallo al 'calentar' el modelo: %v", err))
+		fmt.Fprintln(os.Stderr, cError(fmt.Sprintf("Advertencia: Fallo al 'calentar' el modelo: %v", err)))
 	}
 }
 
 // chooseModel (Sin cambios)
-func chooseModel(client *api.Client, scanner *bufio.Scanner) string {
+func chooseModel(client *api.Client) string {
 	fmt.Println(cSystem("Consultando modelos de Ollama disponibles..."))
+
 	ctx := context.Background()
 	resp, err := client.List(ctx)
 	if err != nil {
-		log.Fatal(cError("Error fatal: No se pudo listar los modelos de Ollama: %v", err))
+		log.Fatal(cError(fmt.Sprintf("Error fatal: No se pudo listar los modelos de Ollama: %v", err)))
 	}
 	if len(resp.Models) == 0 {
 		log.Fatal(cError("Error fatal: No tienes ningún modelo de Ollama descargado. (Usa 'ollama pull ...')"))
 	}
+
 	fmt.Println(cSystem("--- Elige un modelo de IA ---"))
 	fmt.Println(cSystem("------------------------------"))
 	for i, model := range resp.Models {
 		fmt.Printf("%d: %s\n", i+1, model.Name)
 	}
 	fmt.Println(cSystem("------------------------------"))
+
+	scanner := bufio.NewScanner(os.Stdin)
+
 	var choice int
 	for {
 		fmt.Print("Introduce el número del modelo: ")
@@ -180,7 +186,7 @@ func chooseModel(client *api.Client, scanner *bufio.Scanner) string {
 	return resp.Models[choice-1].Name
 }
 
-// --- main (¡ACTUALIZADO!) ---
+// main (Sin cambios)
 func main() {
 	loadLogos()
 	createColorMap()
@@ -188,11 +194,10 @@ func main() {
 
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
-		log.Fatal(cError("Error fatal: No se pudo crear el cliente de Ollama. ¿Está Ollama corriendo?", err))
+		log.Fatal(cError(fmt.Sprintf("Error fatal: No se pudo crear el cliente de Ollama: %v", err)))
 	}
 
-	scanner := bufio.NewScanner(os.Stdin)
-	selectedModel := chooseModel(client, scanner)
+	selectedModel := chooseModel(client)
 
 	clearScreen()
 	msg := fmt.Sprintf("Cargando modelo \"%s\" en memoria...\n(Esto puede tardar unos segundos)", selectedModel)
@@ -202,8 +207,11 @@ func main() {
 	clearScreen()
 	printLogo(selectedModel)
 	printHeader()
-	// --- ¡CONSEJO DE BIENVENIDA AÑADIDO! ---
 	fmt.Println(cSystem("\n  Consejo: Escribe //help para ver todos los comandos."))
+
+	state := liner.NewLiner()
+	defer state.Close()
+	state.SetCtrlCAborts(true)
 
 	var alwaysExecute bool = false
 	var isFirstLoop bool = true
@@ -216,39 +224,47 @@ func main() {
 			fmt.Println(cSystem("──────────────────────────────────────────────────"))
 		}
 
+		var prompt string
 		cwd, err := os.Getwd()
 		if err != nil {
-			fmt.Print(cError("ia> (error dir) >>> "))
+			cwd = "(error dir)"
 		} else {
 			home, err := os.UserHomeDir()
 			if err == nil && strings.HasPrefix(cwd, home) {
 				cwd = "~" + strings.TrimPrefix(cwd, home)
 			}
+		}
 
-			var promptPrefix string
-			if alwaysExecute {
-				promptPrefix = cPrompt("ia (auto) ")
+		var promptPrefix string
+		if alwaysExecute {
+			promptPrefix = "ia (auto) "
+		} else {
+			promptPrefix = "ia "
+		}
+		prompt = fmt.Sprintf("%s[%s]> %s >>> ", promptPrefix, selectedModel, cwd)
+
+		input, err := state.Prompt(prompt)
+		if err != nil {
+			if err == io.EOF {
+				break
+			} else if err == liner.ErrPromptAborted {
+				fmt.Println(cSystem("\nPrompt cancelado. Escribe 'exit' o Ctrl+D para salir."))
+				continue
 			} else {
-				promptPrefix = cPrompt("ia ")
+				fmt.Println(cError(fmt.Sprintf("Error al leer la entrada: %v", err)))
+				continue
 			}
-			fmt.Printf("%s[%s]> %s >>> ", promptPrefix, cModel(selectedModel), cwd)
 		}
 
-		if !scanner.Scan() {
-			if err := scanner.Err(); err != nil && err != io.EOF {
-				fmt.Println(cError("Error al leer la entrada:", err))
-			}
-			break
+		if input != "" {
+			state.AppendHistory(input)
 		}
 
-		input := strings.TrimSpace(scanner.Text())
+		input = strings.TrimSpace(input)
 		if input == "" {
 			continue
 		}
 
-		// --- ENRUTADOR DE COMANDOS ACTUALIZADO ---
-
-		// --- ¡NUEVO! Manejo de 'exit' y 'quit' ---
 		if input == "exit" || input == "quit" {
 			break
 		}
@@ -258,18 +274,18 @@ func main() {
 			if dir == "" || dir == "~" {
 				home, err := os.UserHomeDir()
 				if err != nil {
-					fmt.Fprintln(os.Stderr, cError("Error al encontrar el home dir: %v", err))
+					fmt.Fprintln(os.Stderr, cError(fmt.Sprintf("Error al encontrar el home dir: %v", err)))
 					continue
 				}
 				dir = home
 			}
 			if err := os.Chdir(dir); err != nil {
-				fmt.Fprintln(os.Stderr, cError(err))
+				fmt.Fprintln(os.Stderr, cError(err.Error()))
 			}
 			continue
 
 		} else if input == "//model" {
-			selectedModel = chooseModel(client, scanner)
+			selectedModel = chooseModel(client)
 			clearScreen()
 			msg := fmt.Sprintf("Cargando modelo \"%s\" en memoria...\n(Esto puede tardar unos segundos)", selectedModel)
 			fmt.Println(cSystem(msg))
@@ -277,7 +293,6 @@ func main() {
 			clearScreen()
 			printLogo(selectedModel)
 			printHeader()
-			// --- ¡CONSEJO AÑADIDO AQUÍ TAMBIÉN! ---
 			fmt.Println(cSystem("\n  Consejo: Escribe //help para ver todos los comandos."))
 			isFirstLoop = true
 			continue
@@ -288,10 +303,9 @@ func main() {
 			fmt.Println()
 			continue
 
-			// --- ¡NUEVO! Comando //help ---
 		} else if input == "//help" {
 			printHelp()
-			continue // Vuelve al prompt sin imprimir el separador
+			continue
 
 		} else if strings.HasPrefix(input, "//") {
 			prompt := strings.TrimPrefix(input, "//")
@@ -304,7 +318,7 @@ func main() {
 			if alwaysExecute {
 				handleIACommandAuto(client, selectedModel, prompt)
 			} else {
-				if handleIACommandConfirm(client, scanner, selectedModel, prompt) {
+				if handleIACommandConfirm(client, state, selectedModel, prompt) {
 					alwaysExecute = true
 				}
 			}
@@ -364,7 +378,7 @@ func handleIACommandAuto(client *api.Client, modelName string, userPrompt string
 		return nil
 	}
 	if err := client.Generate(ctx, req, responseHandler); err != nil {
-		fmt.Fprintln(os.Stderr, cError("Error al contactar con Ollama: %v", err))
+		fmt.Fprintln(os.Stderr, cError(fmt.Sprintf("Error al contactar con Ollama: %v", err)))
 		return
 	}
 
@@ -384,8 +398,8 @@ func handleIACommandAuto(client *api.Client, modelName string, userPrompt string
 	fmt.Println()
 }
 
-// handleIACommandConfirm (Sin cambios)
-func handleIACommandConfirm(client *api.Client, scanner *bufio.Scanner, modelName string, userPrompt string) bool {
+// --- handleIACommandConfirm (¡ACTUALIZADO!) ---
+func handleIACommandConfirm(client *api.Client, state *liner.State, modelName string, userPrompt string) bool {
 	systemPrompt := `Eres un experto en terminal de Linux y shell.
 	Traduce la siguiente petición de lenguaje natural a un ÚNICO comando de shell.
 	Responde SÓLO con el comando y nada más. No uses markdown, ni explicaciones.
@@ -405,7 +419,7 @@ func handleIACommandConfirm(client *api.Client, scanner *bufio.Scanner, modelNam
 		return nil
 	}
 	if err := client.Generate(ctx, req, responseHandler); err != nil {
-		fmt.Fprintln(os.Stderr, cError("Error al contactar con Ollama: %v", err))
+		fmt.Fprintln(os.Stderr, cError(fmt.Sprintf("Error al contactar con Ollama: %v", err)))
 		return false
 	}
 
@@ -415,15 +429,23 @@ func handleIACommandConfirm(client *api.Client, scanner *bufio.Scanner, modelNam
 	fmt.Println(cIA("IA> Comando sugerido:"))
 	fmt.Printf("\n%s\n\n", comandoSugerido)
 	fmt.Println(cSystem("---"))
-	fmt.Print(cIA("IA> ¿Ejecutar? [s/N/X (Siempre)]: "))
 
-	if !scanner.Scan() {
-		if err := scanner.Err(); err != nil && err != io.EOF {
-			fmt.Println(cError("Error al leer la confirmación: %v", err))
+	// --- ¡ARREGLO! Se quitó el color cIA() del prompt ---
+	prompt := "IA> ¿Ejecutar? [s/N/X (Siempre)]: "
+	confirmacion, err := state.Prompt(prompt)
+
+	if err != nil {
+		if err == io.EOF || err == liner.ErrPromptAborted {
+			fmt.Println(cSystem("\nCancelado."))
+			return false
 		}
+		fmt.Println(cError(fmt.Sprintf("Error al leer la confirmación: %v", err)))
 		return false
 	}
-	confirmacion := strings.TrimSpace(strings.ToLower(scanner.Text()))
+
+	state.AppendHistory(confirmacion)
+
+	confirmacion = strings.TrimSpace(strings.ToLower(confirmacion))
 
 	switch confirmacion {
 		case "s":
