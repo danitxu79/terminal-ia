@@ -2,22 +2,23 @@ package main
 
 import (
 	// "bufio" // Ya no se usa
-	// "bytes" // Ya no se usa
+	// "bytes" // ¡ELIMINADO!
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
-	"net/http" // ¡Importante!
-	"net/url"  // ¡Importante!
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath" // ¡Importante para el historial!
 	"strconv"
 	"strings"
 	"syscall"
 
-	"github.com/ollama/ollama/api" // --- ¡LÍNEA CORREGIDA! ---
+	"github.com/ollama/ollama/api"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/lucasb-eyer/go-colorful"
@@ -25,7 +26,24 @@ import (
 	"github.com/peterh/liner"
 )
 
-// --- ¡NUEVO! Structs para la API de wttr.in ---
+// --- Variables Globales de Estilo (Sin cambios) ---
+var (
+	logoMap    map[string][]string
+	colorMap   map[string][]string
+
+	styleHeader = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
+
+	cSystem   = color.New(color.FgYellow).SprintFunc()
+	cError    = color.New(color.FgRed, color.Bold).SprintFunc()
+	cPrompt   = color.New(color.FgHiCyan, color.Bold).SprintFunc()
+	cIA       = color.New(color.FgGreen).SprintFunc()
+	cModel    = color.New(color.FgMagenta).SprintFunc()
+)
+
+// --- ¡NUEVO! Define el nombre del archivo de historial ---
+const historyFileName = ".terminal_ia_history"
+
+// --- Estructuras para la API de wttr.in (Sin cambios) ---
 type WttrWeatherDesc struct {
 	Value string `json:"value"`
 }
@@ -46,20 +64,6 @@ type WttrResponse struct {
 	} `json:"nearest_area"`
 }
 
-
-// --- Variables Globales de Estilo (Sin cambios) ---
-var (
-	logoMap    map[string][]string
-	colorMap   map[string][]string
-
-	styleHeader = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
-
-	cSystem   = color.New(color.FgYellow).SprintFunc()
-	cError    = color.New(color.FgRed, color.Bold).SprintFunc()
-	cPrompt   = color.New(color.FgHiCyan, color.Bold).SprintFunc()
-	cIA       = color.New(color.FgGreen).SprintFunc()
-	cModel    = color.New(color.FgMagenta).SprintFunc()
-)
 
 // clearScreen (Sin cambios)
 func clearScreen() {
@@ -140,13 +144,13 @@ func printLogo(modelName string) {
 func printHeader() {
 	fmt.Println()
 	// --- ¡CAMBIO DE VERSIÓN AQUÍ! ---
-	fmt.Println(styleHeader.Render("  Terminal Aumentada por IA (v17.2)"))
+	fmt.Println(styleHeader.Render("  Terminal Aumentada por IA (v17.4)"))
 	fmt.Println(styleHeader.Render("  Creado por: Daniel Serrano Armenta <dani.eus79@gmail.com>"))
 	fmt.Println(styleHeader.Render("  Copyright (c) 2025 Daniel Serrano Armenta. Ver LICENSE para más detalles."))
 	fmt.Println(styleHeader.Render("  Github: https://github.com/danitxu79/terminal-ia"))
 }
 
-// --- printHelp (¡ACTUALIZADO!) ---
+// --- printHelp (Sin cambios) ---
 func printHelp() {
 	fmt.Println()
 	fmt.Println(cSystem("--- Ayuda: Comandos Disponibles ---"))
@@ -218,6 +222,29 @@ func chooseModel(client *api.Client, state *liner.State) string {
 	return resp.Models[choice-1].Name
 }
 
+// --- ¡NUEVO! ---
+// Guarda el historial de liner en el archivo
+func saveHistory(state *liner.State) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, cError(fmt.Sprintf("Error al encontrar el home dir para guardar historial: %v", err)))
+		return
+	}
+	historyPath := filepath.Join(home, historyFileName)
+
+	f, err := os.Create(historyPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, cError(fmt.Sprintf("Error al crear archivo de historial: %v", err)))
+		return
+	}
+	defer f.Close()
+
+	if _, err := state.WriteHistory(f); err != nil {
+		fmt.Fprintln(os.Stderr, cError(fmt.Sprintf("Error al escribir el historial: %v", err)))
+	}
+}
+
+
 // --- main (¡ACTUALIZADO!) ---
 func main() {
 	loadLogos()
@@ -233,6 +260,19 @@ func main() {
 	defer state.Close()
 	state.SetCtrlCAborts(true)
 
+	// Cargar historial
+	home, err := os.UserHomeDir()
+	if err == nil {
+		historyPath := filepath.Join(home, historyFileName)
+		if f, err := os.Open(historyPath); err == nil {
+			state.ReadHistory(f)
+			f.Close()
+		}
+	}
+	// Guardar historial al salir
+	defer saveHistory(state)
+
+
 	selectedModel := chooseModel(client, state)
 
 	clearScreen()
@@ -247,6 +287,8 @@ func main() {
 
 	var alwaysExecute bool = false
 	var isFirstLoop bool = true
+
+	// --- LÍNEA 'PopHistory' ELIMINADA ---
 
 	for {
 		if isFirstLoop {
@@ -327,6 +369,8 @@ func main() {
 			printHeader()
 			fmt.Println(cSystem("\n  Consejo: Escribe /help para ver todos los comandos."))
 			isFirstLoop = true
+
+			// --- LÍNEAS 'PopHistory' ELIMINADAS ---
 			continue
 
 		} else if input == "/ask" {
@@ -339,7 +383,7 @@ func main() {
 			printHelp()
 			continue
 
-		} else if strings.HasPrefix(input, "/tiempo ") { // --- ¡NUEVO! ---
+		} else if strings.HasPrefix(input, "/tiempo ") {
 			prompt := strings.TrimPrefix(input, "/tiempo ")
 			prompt = strings.TrimSpace(prompt)
 			if prompt == "" {
@@ -409,23 +453,18 @@ func sanitizeIACommand(rawCmd string) string {
 	return cmd
 }
 
-// --- ¡NUEVA FUNCIÓN DE TIEMPO! ---
-// (Reemplaza a 'handleWebCommand')
+// handleWeatherCommand (Sin cambios)
 func handleWeatherCommand(client *api.Client, modelName string, location string) {
 	fmt.Println(cIA("IA> Consultando el tiempo...") + cSystem(" (Usando wttr.in)"))
 
-	// 1. Preparar la URL de wttr.in (pide 1 día de previsión en formato JSON)
-	// Usamos http:// para evitar problemas de certificados
 	endpoint := fmt.Sprintf("http://wttr.in/%s?format=j1", url.QueryEscape(location))
 
-	// 2. Realizar la petición HTTP
 	httpClient := &http.Client{}
 	req, err := http.NewRequest("GET", endpoint, nil)
 	if err != nil {
 		fmt.Println(cError(fmt.Sprintf("\nError al crear la petición web: %v", err)))
 		return
 	}
-	// wttr.in requiere un User-Agent
 	req.Header.Set("User-Agent", "terminal-ia-go-client")
 
 	resp, err := httpClient.Do(req)
@@ -440,21 +479,18 @@ func handleWeatherCommand(client *api.Client, modelName string, location string)
 		return
 	}
 
-	// 3. Leer y "Aumentar" (Preparar el contexto para Ollama)
 	var wttrResp WttrResponse
 	if err := json.NewDecoder(resp.Body).Decode(&wttrResp); err != nil {
 		fmt.Println(cError(fmt.Sprintf("\nError al decodificar la respuesta de wttr.in: %v", err)))
 		return
 	}
 
-	// 4. Comprobar si obtuvimos una respuesta
 	if len(wttrResp.CurrentCondition) == 0 {
 		fmt.Println(cError("\nLo siento, wttr.in no pudo encontrar esa localización."))
 		fmt.Println()
 		return
 	}
 
-	// 5. Construir el contexto
 	current := wttrResp.CurrentCondition[0]
 	desc := ""
 	if len(current.WeatherDesc) > 0 {
@@ -478,7 +514,6 @@ func handleWeatherCommand(client *api.Client, modelName string, location string)
 		desc,
 	)
 
-	// 6. Generar (Llamar a Ollama con el contexto)
 	systemPrompt := "Eres un asistente de IA. Responde a la 'Pregunta del Usuario' en español, de forma concisa y amigable, basándote únicamente en el 'Contexto del tiempo' proporcionado."
 	fullPrompt := fmt.Sprintf("%s\n\n%s\n\nPregunta del Usuario: ¿Qué tiempo hace en %s?", systemPrompt, contextSnippet, location)
 
