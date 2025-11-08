@@ -33,8 +33,8 @@ Antes de empezar, asegúrate de tener:
 
 1.  **Clona el repositorio:**
     ```bash
-    git clone [https://github.com/](https://github.com/danitxu79/terminal-ia].git
-    cd [terminal-ia]
+    git clone https://github.com/danitxu79/terminal-ia.git
+    cd terminal-ia
     ```
 
 2.  **Instala las dependencias de Go:**
