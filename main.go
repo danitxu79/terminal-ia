@@ -14,40 +14,49 @@ import (
 
 	"github.com/ollama/ollama/api"
 
-	"github.com/charmbracelet/lipgloss"
-	"github.com/lucasb-eyer/go-colorful"
+	"github.com/charmbracelet/lipgloss"   // Para el logo y header
+	"github.com/lucasb-eyer/go-colorful" // Para el degradado
+	"github.com/fatih/color"             // Para el resto de la UI
 )
 
+// --- Variables Globales de Estilo ---
 var (
 	logoMap    map[string][]string
 	colorMap   map[string][]string
-	styleError = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5733"))
+
+	styleHeader = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
+
+	cSystem   = color.New(color.FgYellow).SprintFunc()
+	cError    = color.New(color.FgRed, color.Bold).SprintFunc()
+	cPrompt   = color.New(color.FgHiCyan, color.Bold).SprintFunc()
+	cIA       = color.New(color.FgGreen).SprintFunc()
+	cModel    = color.New(color.FgMagenta).SprintFunc()
 )
 
-// --- clearScreen (Sin cambios) ---
+// clearScreen (Sin cambios)
 func clearScreen() {
 	fmt.Print("\033[2J\033[H")
 }
 
-// --- loadLogos (Sin cambios) ---
+// loadLogos (Sin cambios)
 func loadLogos() {
 	file, err := os.Open("logos.json")
 	if err != nil {
-		fmt.Println(styleError.Render("Error: No se encontró logos.json. Saltando logos."))
+		fmt.Println(cError("Error: No se encontró logos.json. Saltando logos."))
 		logoMap = make(map[string][]string)
 		return
 	}
 	defer file.Close()
 	bytes, err := io.ReadAll(file)
 	if err != nil {
-		log.Fatal("Error fatal: No se pudo leer logos.json:", err)
+		log.Fatal(cError("Error fatal: No se pudo leer logos.json: %v", err))
 	}
 	if err := json.Unmarshal(bytes, &logoMap); err != nil {
-		log.Fatal("Error fatal: No se pudo parsear logos.json:", err)
+		log.Fatal(cError("Error fatal: No se pudo parsear logos.json: %v", err))
 	}
 }
 
-// --- createColorMap (Sin cambios) ---
+// createColorMap (Sin cambios)
 func createColorMap() {
 	colorMap = map[string][]string{
 		"llama":    {"#B721FF", "#21D4FD"},
@@ -61,7 +70,7 @@ func createColorMap() {
 	}
 }
 
-// --- getLogoKey (Sin cambios) ---
+// getLogoKey (Sin cambios)
 func getLogoKey(modelName string) string {
 	lowerName := strings.ToLower(modelName)
 	for key := range logoMap {
@@ -72,7 +81,7 @@ func getLogoKey(modelName string) string {
 	return "default"
 }
 
-// --- printLogo (Sin cambios) ---
+// printLogo (Sin cambios)
 func printLogo(modelName string) {
 	logoKey := getLogoKey(modelName)
 	logoLines, ok := logoMap[logoKey]
@@ -99,9 +108,31 @@ func printLogo(modelName string) {
 	}
 }
 
-// --- FUNCIÓN DE CALENTAMIENTO (MODIFICADA) ---
-// ¡Ahora SÓLO calienta el modelo! No borra ni imprime logos.
-// Es una función "silenciosa" de trabajo.
+// printHeader (Sin cambios)
+func printHeader() {
+	fmt.Println()
+	fmt.Println(styleHeader.Render("  Terminal Aumentada por IA (v0.1)"))
+	fmt.Println(styleHeader.Render("  Creado por: Daniel Serrano Armenta <dani.eus79@gmail.com>"))
+	fmt.Println(styleHeader.Render("  Copyright (c) 2025 Daniel Serrano Armenta. Ver LICENSE para más detalles."))
+	fmt.Println(styleHeader.Render("  Github: https://github.com/danitxu79/terminal-ia"))
+}
+
+// --- ¡NUEVA FUNCIÓN DE AYUDA! ---
+// Imprime la lista de comandos disponibles
+func printHelp() {
+	fmt.Println()
+	fmt.Println(cSystem("--- Ayuda: Comandos Disponibles ---"))
+	fmt.Println(cPrompt("  //<petición> ") + cIA("- Envía tu petición al modelo de IA (ej. // listar archivos .go)"))
+	fmt.Println(cPrompt("  //model      ") + cIA("- Vuelve a mostrar el selector de modelos."))
+	fmt.Println(cPrompt("  //ask        ") + cIA("- Desactiva el modo 'auto' y vuelve a pedir confirmación."))
+	fmt.Println(cPrompt("  //help       ") + cIA("- Muestra este menú de ayuda."))
+	fmt.Println(cPrompt("  cd <dir>     ") + cIA("- Cambia el directorio actual (comando interno)."))
+	fmt.Println(cPrompt("  exit / quit  ") + cIA("- Cierra la terminal de IA (también Ctrl+D)."))
+	fmt.Println(cSystem("------------------------------------"))
+	fmt.Println()
+}
+
+// warmUpModel (Sin cambios)
 func warmUpModel(client *api.Client, modelName string) {
 	ctx := context.Background()
 	req := &api.GenerateRequest{
@@ -110,40 +141,38 @@ func warmUpModel(client *api.Client, modelName string) {
 		Stream: new(bool),
 	}
 	responseHandler := func(r api.GenerateResponse) error { return nil }
-
-	// Ejecuta el calentamiento
 	if err := client.Generate(ctx, req, responseHandler); err != nil {
-		// No usamos log.Fatal, pero sí informamos del error.
-		fmt.Fprintf(os.Stderr, "Advertencia: Fallo al 'calentar' el modelo: %v\n", err)
+		fmt.Fprintln(os.Stderr, cError("Advertencia: Fallo al 'calentar' el modelo: %v", err))
 	}
 }
 
-// --- chooseModel (Sin cambios) ---
+// chooseModel (Sin cambios)
 func chooseModel(client *api.Client, scanner *bufio.Scanner) string {
-	fmt.Println("Consultando modelos de Ollama disponibles...")
+	fmt.Println(cSystem("Consultando modelos de Ollama disponibles..."))
 	ctx := context.Background()
 	resp, err := client.List(ctx)
 	if err != nil {
-		log.Fatalf("Error fatal: No se pudo listar los modelos de Ollama: %v", err)
+		log.Fatal(cError("Error fatal: No se pudo listar los modelos de Ollama: %v", err))
 	}
 	if len(resp.Models) == 0 {
-		log.Fatal("Error fatal: No tienes ningún modelo de Ollama descargado. (Usa 'ollama pull ...')")
+		log.Fatal(cError("Error fatal: No tienes ningún modelo de Ollama descargado. (Usa 'ollama pull ...')"))
 	}
-	fmt.Println("--- Elige un modelo de IA ---")
+	fmt.Println(cSystem("--- Elige un modelo de IA ---"))
+	fmt.Println(cSystem("------------------------------"))
 	for i, model := range resp.Models {
 		fmt.Printf("%d: %s\n", i+1, model.Name)
 	}
-	fmt.Println("------------------------------")
+	fmt.Println(cSystem("------------------------------"))
 	var choice int
 	for {
 		fmt.Print("Introduce el número del modelo: ")
 		if !scanner.Scan() {
-			log.Fatal("Error al leer la selección.")
+			log.Fatal(cError("Error al leer la selección."))
 		}
 		input := scanner.Text()
 		choice, err = strconv.Atoi(input)
 		if err != nil || choice < 1 || choice > len(resp.Models) {
-			fmt.Println("Selección inválida. Introduce un número de la lista.")
+			fmt.Println(cError("Selección inválida. Introduce un número de la lista."))
 		} else {
 			break
 		}
@@ -151,40 +180,30 @@ func chooseModel(client *api.Client, scanner *bufio.Scanner) string {
 	return resp.Models[choice-1].Name
 }
 
-// --- FUNCIÓN PRINCIPAL (MODIFICADA) ---
+// --- main (¡ACTUALIZADO!) ---
 func main() {
 	loadLogos()
 	createColorMap()
-
-	// 1. Limpia la pantalla para el menú
 	clearScreen()
 
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
-		log.Fatal("Error fatal: No se pudo crear el cliente de Ollama. ¿Está Ollama corriendo?", err)
+		log.Fatal(cError("Error fatal: No se pudo crear el cliente de Ollama. ¿Está Ollama corriendo?", err))
 	}
 
 	scanner := bufio.NewScanner(os.Stdin)
-
-	// 2. Muestra el menú y el usuario elige
 	selectedModel := chooseModel(client, scanner)
 
-	// --- ¡NUEVO FLUJO DE INICIO CON FEEDBACK! ---
-	// 3. Borra la terminal (después de elegir)
 	clearScreen()
-
-	// 4. Muestra el feedback de carga
-	fmt.Printf("Cargando modelo \"%s\" en memoria...\n(Esto puede tardar unos segundos)\n", selectedModel)
-
-	// 5. Ejecuta el calentamiento (la parte lenta)
+	msg := fmt.Sprintf("Cargando modelo \"%s\" en memoria...\n(Esto puede tardar unos segundos)", selectedModel)
+	fmt.Println(cSystem(msg))
 	warmUpModel(client, selectedModel)
 
-	// 6. Borra la terminal DE NUEVO (para quitar el mensaje de "Cargando...")
 	clearScreen()
-
-	// 7. Muestra el logo
 	printLogo(selectedModel)
-	// --- FIN DEL NUEVO FLUJO ---
+	printHeader()
+	// --- ¡CONSEJO DE BIENVENIDA AÑADIDO! ---
+	fmt.Println(cSystem("\n  Consejo: Escribe //help para ver todos los comandos."))
 
 	var alwaysExecute bool = false
 	var isFirstLoop bool = true
@@ -194,69 +213,91 @@ func main() {
 			isFirstLoop = false
 			fmt.Println()
 		} else {
-			fmt.Println("──────────────────────────────────────────────────")
+			fmt.Println(cSystem("──────────────────────────────────────────────────"))
 		}
 
 		cwd, err := os.Getwd()
 		if err != nil {
-			fmt.Print("ia> (error dir) >>> ")
+			fmt.Print(cError("ia> (error dir) >>> "))
 		} else {
 			home, err := os.UserHomeDir()
 			if err == nil && strings.HasPrefix(cwd, home) {
 				cwd = "~" + strings.TrimPrefix(cwd, home)
 			}
+
+			var promptPrefix string
 			if alwaysExecute {
-				fmt.Printf("ia (auto) [%s]> %s >>> ", selectedModel, cwd)
+				promptPrefix = cPrompt("ia (auto) ")
 			} else {
-				fmt.Printf("ia [%s]> %s >>> ", selectedModel, cwd)
+				promptPrefix = cPrompt("ia ")
 			}
+			fmt.Printf("%s[%s]> %s >>> ", promptPrefix, cModel(selectedModel), cwd)
 		}
+
 		if !scanner.Scan() {
 			if err := scanner.Err(); err != nil && err != io.EOF {
-				fmt.Println("Error al leer la entrada:", err)
+				fmt.Println(cError("Error al leer la entrada:", err))
 			}
 			break
 		}
+
 		input := strings.TrimSpace(scanner.Text())
 		if input == "" {
 			continue
 		}
+
+		// --- ENRUTADOR DE COMANDOS ACTUALIZADO ---
+
+		// --- ¡NUEVO! Manejo de 'exit' y 'quit' ---
+		if input == "exit" || input == "quit" {
+			break
+		}
+
 		if strings.HasPrefix(input, "cd ") {
 			dir := strings.TrimSpace(strings.TrimPrefix(input, "cd "))
 			if dir == "" || dir == "~" {
 				home, err := os.UserHomeDir()
 				if err != nil {
-					fmt.Fprintln(os.Stderr, "Error al encontrar el home dir:", err)
+					fmt.Fprintln(os.Stderr, cError("Error al encontrar el home dir: %v", err))
 					continue
 				}
 				dir = home
 			}
 			if err := os.Chdir(dir); err != nil {
-				fmt.Fprintln(os.Stderr, err)
+				fmt.Fprintln(os.Stderr, cError(err))
 			}
 			continue
 
-			// --- ¡NUEVO FLUJO PARA //model TAMBIÉN! ---
 		} else if input == "//model" {
 			selectedModel = chooseModel(client, scanner)
-			clearScreen() // 1. Borra
-			fmt.Printf("Cargando modelo \"%s\" en memoria...\n(Esto puede tardar unos segundos)\n", selectedModel) // 2. Feedback
-			warmUpModel(client, selectedModel) // 3. Calienta
-			clearScreen() // 4. Borra de nuevo
-			printLogo(selectedModel) // 5. Muestra logo
+			clearScreen()
+			msg := fmt.Sprintf("Cargando modelo \"%s\" en memoria...\n(Esto puede tardar unos segundos)", selectedModel)
+			fmt.Println(cSystem(msg))
+			warmUpModel(client, selectedModel)
+			clearScreen()
+			printLogo(selectedModel)
+			printHeader()
+			// --- ¡CONSEJO AÑADIDO AQUÍ TAMBIÉN! ---
+			fmt.Println(cSystem("\n  Consejo: Escribe //help para ver todos los comandos."))
 			isFirstLoop = true
 			continue
 
 		} else if input == "//ask" {
 			alwaysExecute = false
-			fmt.Println("IA> Modo auto-Llamada desactivado. Se pedirá confirmación.")
+			fmt.Println(cSystem("IA> Modo auto-ejecución desactivado. Se pedirá confirmación."))
 			fmt.Println()
 			continue
+
+			// --- ¡NUEVO! Comando //help ---
+		} else if input == "//help" {
+			printHelp()
+			continue // Vuelve al prompt sin imprimir el separador
+
 		} else if strings.HasPrefix(input, "//") {
 			prompt := strings.TrimPrefix(input, "//")
 			prompt = strings.TrimSpace(prompt)
 			if prompt == "" {
-				fmt.Println("IA> Petición de IA vacía. Escribe // seguido de tu consulta.")
+				fmt.Println(cError("IA> Petición de IA vacía. Escribe // seguido de tu consulta."))
 				fmt.Println()
 				continue
 			}
@@ -267,6 +308,7 @@ func main() {
 					alwaysExecute = true
 				}
 			}
+
 		} else {
 			fmt.Println()
 			cmd := exec.Command("bash", "-c", input)
@@ -276,12 +318,11 @@ func main() {
 			fmt.Println()
 		}
 	}
-	fmt.Println("\n¡Adiós!")
+
+	fmt.Println(cSystem("\n¡Adiós!"))
 }
 
-// --- Funciones sin cambios (Sanitize, Auto, Confirm) ---
-// (Estas 3 funciones son idénticas al Paso 7.2)
-
+// sanitizeIACommand (Sin cambios)
 func sanitizeIACommand(rawCmd string) string {
 	cmd := strings.TrimSpace(rawCmd)
 	if strings.HasPrefix(cmd, "`") && strings.HasSuffix(cmd, "`") {
@@ -301,13 +342,16 @@ func sanitizeIACommand(rawCmd string) string {
 	}
 	return cmd
 }
+
+// handleIACommandAuto (Sin cambios)
 func handleIACommandAuto(client *api.Client, modelName string, userPrompt string) {
 	systemPrompt := `Eres un experto en terminal de Linux y shell.
 	Traduce la siguiente petición de lenguaje natural a un ÚNICO comando de shell.
 	Responde SÓLO con el comando y nada más. No uses markdown, ni explicaciones.
 	Petición: `
 	fullPrompt := systemPrompt + userPrompt
-	fmt.Println("IA> Procesando (auto)...")
+	fmt.Println(cIA("IA> Procesando (auto)..."))
+
 	req := &api.GenerateRequest{
 		Model:  modelName,
 		Prompt: fullPrompt,
@@ -320,29 +364,35 @@ func handleIACommandAuto(client *api.Client, modelName string, userPrompt string
 		return nil
 	}
 	if err := client.Generate(ctx, req, responseHandler); err != nil {
-		fmt.Fprintln(os.Stderr, "Error al contactar con Ollama:", err)
+		fmt.Fprintln(os.Stderr, cError("Error al contactar con Ollama: %v", err))
 		return
 	}
+
 	comandoSugerido := sanitizeIACommand(resp.Response)
+
 	fmt.Println()
-	fmt.Println("ejecutando (auto):")
+	fmt.Println(cSystem("ejecutando (auto):"))
 	fmt.Println(comandoSugerido)
 	fmt.Println()
+
 	cmd := exec.Command("bash", "-c", comandoSugerido)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "IA> El comando falló.")
+		fmt.Fprintln(os.Stderr, cError("IA> El comando falló."))
 	}
 	fmt.Println()
 }
+
+// handleIACommandConfirm (Sin cambios)
 func handleIACommandConfirm(client *api.Client, scanner *bufio.Scanner, modelName string, userPrompt string) bool {
 	systemPrompt := `Eres un experto en terminal de Linux y shell.
 	Traduce la siguiente petición de lenguaje natural a un ÚNICO comando de shell.
 	Responde SÓLO con el comando y nada más. No uses markdown, ni explicaciones.
 	Petición: `
 	fullPrompt := systemPrompt + userPrompt
-	fmt.Println("IA> Procesando... (contactando a Ollama)")
+	fmt.Println(cIA("IA> Procesando..."))
+
 	req := &api.GenerateRequest{
 		Model:  modelName,
 		Prompt: fullPrompt,
@@ -355,55 +405,59 @@ func handleIACommandConfirm(client *api.Client, scanner *bufio.Scanner, modelNam
 		return nil
 	}
 	if err := client.Generate(ctx, req, responseHandler); err != nil {
-		fmt.Fprintln(os.Stderr, "Error al contactar con Ollama:", err)
+		fmt.Fprintln(os.Stderr, cError("Error al contactar con Ollama: %v", err))
 		return false
 	}
+
 	comandoSugerido := sanitizeIACommand(resp.Response)
-	fmt.Println("---")
-	fmt.Println("IA> Comando sugerido:")
+
+	fmt.Println(cSystem("---"))
+	fmt.Println(cIA("IA> Comando sugerido:"))
 	fmt.Printf("\n%s\n\n", comandoSugerido)
-	fmt.Println("---")
-	fmt.Print("IA> ¿Ejecutar? [s/N/X (Siempre)]: ")
+	fmt.Println(cSystem("---"))
+	fmt.Print(cIA("IA> ¿Ejecutar? [s/N/X (Siempre)]: "))
+
 	if !scanner.Scan() {
 		if err := scanner.Err(); err != nil && err != io.EOF {
-			fmt.Println("Error al leer la confirmación:", err)
+			fmt.Println(cError("Error al leer la confirmación: %v", err))
 		}
 		return false
 	}
-	confirmacion := strings.TrimSpace(scanner.Text())
-	switch strings.ToLower(confirmacion) {
+	confirmacion := strings.TrimSpace(strings.ToLower(scanner.Text()))
+
+	switch confirmacion {
 		case "s":
-			fmt.Println("IA> Ejecutando...")
+			fmt.Println(cSystem("IA> Ejecutando..."))
 			fmt.Println()
-			fmt.Println("ejecutando:")
+			fmt.Println(cSystem("ejecutando:"))
 			fmt.Println(comandoSugerido)
 			fmt.Println()
 			cmd := exec.Command("bash", "-c", comandoSugerido)
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err != nil {
-				fmt.Fprintln(os.Stderr, "IA> El comando falló.")
+				fmt.Fprintln(os.Stderr, cError("IA> El comando falló."))
 			}
 			fmt.Println()
 			return false
 		case "x":
-			fmt.Println("IA> Ejecutando y activando modo 'auto'...")
+			fmt.Println(cSystem("IA> Ejecutando y activando modo 'auto'..."))
 			fmt.Println()
-			fmt.Println("ejecutando:")
+			fmt.Println(cSystem("ejecutando:"))
 			fmt.Println(comandoSugerido)
 			fmt.Println()
 			cmd := exec.Command("bash", "-c", comandoSugerido)
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err != nil {
-				fmt.Fprintln(os.Stderr, "IA> El comando falló.")
+				fmt.Fprintln(os.Stderr, cError("IA> El comando falló."))
 			}
 			fmt.Println()
-			fmt.Println("IA> Modo auto-ejecución activado. Escribe '//ask' para desactivarlo.")
+			fmt.Println(cSystem("IA> Modo auto-ejecución activado. Escribe '//ask' para desactivarlo."))
 			fmt.Println()
 			return true
 		default:
-			fmt.Println("IA> Cancelado.")
+			fmt.Println(cSystem("IA> Cancelado."))
 			fmt.Println()
 			return false
 	}
