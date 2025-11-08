@@ -1,7 +1,7 @@
 package main
 
 import (
-	"bufio"
+	// "bufio" // Ya no lo necesitamos
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,15 +9,17 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/ollama/ollama/api"
 
-	"github.com/charmbracelet/lipgloss"   // Para el logo y header
-	"github.com/lucasb-eyer/go-colorful" // Para el degradado
-	"github.com/fatih/color"             // Para la UI
-	"github.com/peterh/liner"            // Para el historial
+	"github.com/charmbracelet/lipgloss"
+	"github.com/lucasb-eyer/go-colorful"
+	"github.com/fatih/color"
+	"github.com/peterh/liner"
 )
 
 // --- Variables Globales de Estilo ---
@@ -113,7 +115,7 @@ func printLogo(modelName string) {
 func printHeader() {
 	fmt.Println()
 	// --- ¡CAMBIO DE VERSIÓN AQUÍ! ---
-	fmt.Println(styleHeader.Render("  Terminal Aumentada por IA (v11.2)"))
+	fmt.Println(styleHeader.Render("  Terminal Aumentada por IA (v13.3)"))
 	fmt.Println(styleHeader.Render("  Creado por: Daniel Serrano Armenta <dani.eus79@gmail.com>"))
 	fmt.Println(styleHeader.Render("  Copyright (c) 2025 Daniel Serrano Armenta. Ver LICENSE para más detalles."))
 	fmt.Println(styleHeader.Render("  Github: https://github.com/danitxu79/terminal-ia"))
@@ -123,15 +125,17 @@ func printHeader() {
 func printHelp() {
 	fmt.Println()
 	fmt.Println(cSystem("--- Ayuda: Comandos Disponibles ---"))
-	fmt.Println(cPrompt("  //<petición> ") + cIA("- Envía tu petición al modelo de IA (ej. // listar archivos .go)"))
-	fmt.Println(cPrompt("  //model      ") + cIA("- Vuelve a mostrar el selector de modelos."))
-	fmt.Println(cPrompt("  //ask        ") + cIA("- Desactiva el modo 'auto' y vuelve a pedir confirmación."))
-	fmt.Println(cPrompt("  //help       ") + cIA("- Muestra este menú de ayuda."))
+	fmt.Println(cPrompt("  /<petición> ") + cIA("- Pide un comando de shell (ej. /listar archivos .go)"))
+	fmt.Println(cPrompt("  /chat <pregunta> ") + cIA("- Inicia una conversación de chat (ej. /chat ¿qué es Docker?)"))
+	fmt.Println(cPrompt("  /model       ") + cIA("- Vuelve a mostrar el selector de modelos."))
+	fmt.Println(cPrompt("  /ask         ") + cIA("- Desactiva el modo 'auto' y vuelve a pedir confirmación."))
+	fmt.Println(cPrompt("  /help        ") + cIA("- Muestra este menú de ayuda."))
 	fmt.Println(cPrompt("  cd <dir>     ") + cIA("- Cambia el directorio actual (comando interno)."))
 	fmt.Println(cPrompt("  exit / quit  ") + cIA("- Cierra la terminal de IA (también Ctrl+D)."))
 	fmt.Println(cSystem("------------------------------------"))
 	fmt.Println()
 }
+
 
 // warmUpModel (Sin cambios)
 func warmUpModel(client *api.Client, modelName string) {
@@ -147,8 +151,9 @@ func warmUpModel(client *api.Client, modelName string) {
 	}
 }
 
-// chooseModel (Sin cambios)
-func chooseModel(client *api.Client) string {
+// --- chooseModel (¡ACTUALIZADO!) ---
+// Recibe el 'state' de liner y lo usa para leer la entrada
+func chooseModel(client *api.Client, state *liner.State) string {
 	fmt.Println(cSystem("Consultando modelos de Ollama disponibles..."))
 
 	ctx := context.Background()
@@ -167,26 +172,30 @@ func chooseModel(client *api.Client) string {
 	}
 	fmt.Println(cSystem("------------------------------"))
 
-	scanner := bufio.NewScanner(os.Stdin)
-
 	var choice int
 	for {
-		fmt.Print("Introduce el número del modelo: ")
-		if !scanner.Scan() {
-			log.Fatal(cError("Error al leer la selección."))
+		prompt := "Introduce el número del modelo: "
+		input, err := state.Prompt(prompt)
+		if err != nil {
+			if err == io.EOF || err == liner.ErrPromptAborted {
+				log.Fatal(cError("\nSelección cancelada. Saliendo."))
+			}
+			log.Fatal(cError(fmt.Sprintf("Error al leer la selección: %v", err)))
 		}
-		input := scanner.Text()
-		choice, err = strconv.Atoi(input)
+
+		choice, err = strconv.Atoi(strings.TrimSpace(input))
 		if err != nil || choice < 1 || choice > len(resp.Models) {
 			fmt.Println(cError("Selección inválida. Introduce un número de la lista."))
 		} else {
+			// Añade la selección al historial (pero la borraremos en main)
+			state.AppendHistory(input)
 			break
 		}
 	}
 	return resp.Models[choice-1].Name
 }
 
-// main (Sin cambios)
+// --- main (¡ACTUALIZADO!) ---
 func main() {
 	loadLogos()
 	createColorMap()
@@ -197,7 +206,11 @@ func main() {
 		log.Fatal(cError(fmt.Sprintf("Error fatal: No se pudo crear el cliente de Ollama: %v", err)))
 	}
 
-	selectedModel := chooseModel(client)
+	state := liner.NewLiner()
+	defer state.Close()
+	state.SetCtrlCAborts(true)
+
+	selectedModel := chooseModel(client, state)
 
 	clearScreen()
 	msg := fmt.Sprintf("Cargando modelo \"%s\" en memoria...\n(Esto puede tardar unos segundos)", selectedModel)
@@ -207,14 +220,13 @@ func main() {
 	clearScreen()
 	printLogo(selectedModel)
 	printHeader()
-	fmt.Println(cSystem("\n  Consejo: Escribe //help para ver todos los comandos."))
-
-	state := liner.NewLiner()
-	defer state.Close()
-	state.SetCtrlCAborts(true)
+	fmt.Println(cSystem("\n  Consejo: Escribe /help para ver todos los comandos."))
 
 	var alwaysExecute bool = false
 	var isFirstLoop bool = true
+
+	// --- LÍNEA INCORRECTA ELIMINADA ---
+	// state.DeleteHistory(0) // Esta línea daba error
 
 	for {
 		if isFirstLoop {
@@ -284,8 +296,8 @@ func main() {
 			}
 			continue
 
-		} else if input == "//model" {
-			selectedModel = chooseModel(client)
+		} else if input == "/model" {
+			selectedModel = chooseModel(client, state)
 			clearScreen()
 			msg := fmt.Sprintf("Cargando modelo \"%s\" en memoria...\n(Esto puede tardar unos segundos)", selectedModel)
 			fmt.Println(cSystem(msg))
@@ -293,25 +305,38 @@ func main() {
 			clearScreen()
 			printLogo(selectedModel)
 			printHeader()
-			fmt.Println(cSystem("\n  Consejo: Escribe //help para ver todos los comandos."))
+			fmt.Println(cSystem("\n  Consejo: Escribe /help para ver todos los comandos."))
 			isFirstLoop = true
+			// --- LÍNEAS INCORRECTAS ELIMINADAS ---
+			// state.DeleteHistory(state.HistorySize() - 1)
+			// state.DeleteHistory(state.HistorySize() - 1)
 			continue
 
-		} else if input == "//ask" {
+		} else if input == "/ask" {
 			alwaysExecute = false
 			fmt.Println(cSystem("IA> Modo auto-ejecución desactivado. Se pedirá confirmación."))
 			fmt.Println()
 			continue
 
-		} else if input == "//help" {
+		} else if input == "/help" {
 			printHelp()
 			continue
 
-		} else if strings.HasPrefix(input, "//") {
-			prompt := strings.TrimPrefix(input, "//")
+		} else if strings.HasPrefix(input, "/chat ") {
+			prompt := strings.TrimPrefix(input, "/chat ")
 			prompt = strings.TrimSpace(prompt)
 			if prompt == "" {
-				fmt.Println(cError("IA> Petición de IA vacía. Escribe // seguido de tu consulta."))
+				fmt.Println(cError("IA> Petición de chat vacía. Escribe /chat seguido de tu pregunta."))
+				fmt.Println()
+				continue
+			}
+			handleChatCommand(client, selectedModel, prompt)
+
+		} else if strings.HasPrefix(input, "/") {
+			prompt := strings.TrimPrefix(input, "/")
+			prompt = strings.TrimSpace(prompt)
+			if prompt == "" {
+				fmt.Println(cError("IA> Petición de IA vacía. Escribe / seguido de tu consulta."))
 				fmt.Println()
 				continue
 			}
@@ -357,6 +382,56 @@ func sanitizeIACommand(rawCmd string) string {
 	return cmd
 }
 
+// handleChatCommand (Sin cambios)
+func handleChatCommand(client *api.Client, modelName string, userPrompt string) {
+	systemPrompt := "Eres un asistente servicial, amigable y conversacional. Responde a las preguntas del usuario."
+	fullPrompt := fmt.Sprintf("%s\n\nUsuario: %s", systemPrompt, userPrompt)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT)
+
+	go func() {
+		<-sigChan
+		cancel()
+	}()
+
+	defer signal.Stop(sigChan)
+
+	fmt.Println(cIA("IA> Pensando...") + cSystem(" (Presiona Ctrl+C para cancelar)"))
+
+	stream := true
+	req := &api.GenerateRequest{
+		Model:  modelName,
+		Prompt: fullPrompt,
+		Stream: &stream,
+	}
+
+	firstChunk := true
+
+	streamHandler := func(r api.GenerateResponse) error {
+		if firstChunk {
+			fmt.Print("\r" + cIA("IA: ") + "    \r")
+			firstChunk = false
+		}
+		fmt.Print(r.Response)
+		return nil
+	}
+
+	err := client.Generate(ctx, req, streamHandler)
+
+	if err != nil {
+		if err == context.Canceled {
+			fmt.Print(cError("\n[Stream cancelado]"))
+		} else {
+			fmt.Println(cError(fmt.Sprintf("\nError al generar respuesta de chat: %v", err)))
+		}
+	}
+
+	fmt.Println()
+}
+
+
 // handleIACommandAuto (Sin cambios)
 func handleIACommandAuto(client *api.Client, modelName string, userPrompt string) {
 	systemPrompt := `Eres un experto en terminal de Linux y shell.
@@ -398,7 +473,7 @@ func handleIACommandAuto(client *api.Client, modelName string, userPrompt string
 	fmt.Println()
 }
 
-// --- handleIACommandConfirm (¡ACTUALIZADO!) ---
+// handleIACommandConfirm (Sin cambios)
 func handleIACommandConfirm(client *api.Client, state *liner.State, modelName string, userPrompt string) bool {
 	systemPrompt := `Eres un experto en terminal de Linux y shell.
 	Traduce la siguiente petición de lenguaje natural a un ÚNICO comando de shell.
@@ -430,7 +505,6 @@ func handleIACommandConfirm(client *api.Client, state *liner.State, modelName st
 	fmt.Printf("\n%s\n\n", comandoSugerido)
 	fmt.Println(cSystem("---"))
 
-	// --- ¡ARREGLO! Se quitó el color cIA() del prompt ---
 	prompt := "IA> ¿Ejecutar? [s/N/X (Siempre)]: "
 	confirmacion, err := state.Prompt(prompt)
 
@@ -475,7 +549,7 @@ func handleIACommandConfirm(client *api.Client, state *liner.State, modelName st
 				fmt.Fprintln(os.Stderr, cError("IA> El comando falló."))
 			}
 			fmt.Println()
-			fmt.Println(cSystem("IA> Modo auto-ejecución activado. Escribe '//ask' para desactivarlo."))
+			fmt.Println(cSystem("IA> Modo auto-ejecución activado. Escribe '/ask' para desactivarlo."))
 			fmt.Println()
 			return true
 		default:
