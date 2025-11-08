@@ -1,8 +1,7 @@
 package main
 
 import (
-	// "bufio" // Ya no se usa
-	// "bytes" // ¡ELIMINADO!
+	// "bytes" // --- ¡ELIMINADO! Ya no se usa.
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,10 +12,11 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath" // ¡Importante para el historial!
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/ollama/ollama/api"
 
@@ -26,7 +26,16 @@ import (
 	"github.com/peterh/liner"
 )
 
-// --- Variables Globales de Estilo (Sin cambios) ---
+// --- Constantes del Programa ---
+const (
+	currentVersion  = "17.5" // ¡ACTUALIZADO!
+	repoOwner       = "danitxu79"
+	repoName        = "terminal-ia"
+	historyFileName = ".terminal_ia_history"
+)
+
+
+// --- Estructuras y Variables Globales de Estilo ---
 var (
 	logoMap    map[string][]string
 	colorMap   map[string][]string
@@ -38,12 +47,11 @@ var (
 	cPrompt   = color.New(color.FgHiCyan, color.Bold).SprintFunc()
 	cIA       = color.New(color.FgGreen).SprintFunc()
 	cModel    = color.New(color.FgMagenta).SprintFunc()
+
+	updateMessageChannel = make(chan string, 1)
 )
 
-// --- ¡NUEVO! Define el nombre del archivo de historial ---
-const historyFileName = ".terminal_ia_history"
-
-// --- Estructuras para la API de wttr.in (Sin cambios) ---
+// Structs para la API de wttr.in
 type WttrWeatherDesc struct {
 	Value string `json:"value"`
 }
@@ -62,6 +70,10 @@ type WttrResponse struct {
 			Value string `json:"value"`
 		} `json:"country"`
 	} `json:"nearest_area"`
+}
+// Struct solo para el campo que necesitamos de la API de GitHub
+type GitHubRelease struct {
+	TagName string `json:"tag_name"`
 }
 
 
@@ -140,17 +152,16 @@ func printLogo(modelName string) {
 	}
 }
 
-// --- printHeader (¡ACTUALIZADO!) ---
+// printHeader (Sin cambios)
 func printHeader() {
 	fmt.Println()
-	// --- ¡CAMBIO DE VERSIÓN AQUÍ! ---
-	fmt.Println(styleHeader.Render("  Terminal Aumentada por IA (v17.4)"))
+	fmt.Println(styleHeader.Render(fmt.Sprintf("  Terminal Aumentada por IA (%s)", currentVersion)))
 	fmt.Println(styleHeader.Render("  Creado por: Daniel Serrano Armenta <dani.eus79@gmail.com>"))
 	fmt.Println(styleHeader.Render("  Copyright (c) 2025 Daniel Serrano Armenta. Ver LICENSE para más detalles."))
-	fmt.Println(styleHeader.Render("  Github: https://github.com/danitxu79/terminal-ia"))
+	fmt.Println(styleHeader.Render(fmt.Sprintf("  Github: https://github.com/%s/%s", repoOwner, repoName)))
 }
 
-// --- printHelp (Sin cambios) ---
+// printHelp (Sin cambios)
 func printHelp() {
 	fmt.Println()
 	fmt.Println(cSystem("--- Ayuda: Comandos Disponibles ---"))
@@ -222,8 +233,7 @@ func chooseModel(client *api.Client, state *liner.State) string {
 	return resp.Models[choice-1].Name
 }
 
-// --- ¡NUEVO! ---
-// Guarda el historial de liner en el archivo
+// saveHistory (Sin cambios)
 func saveHistory(state *liner.State) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -244,12 +254,47 @@ func saveHistory(state *liner.State) {
 	}
 }
 
+// checkVersion (Sin cambios)
+func checkVersion() {
+	client := &http.Client{Timeout: 3 * time.Second}
+
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", repoOwner, repoName)
+
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return // Falla silenciosamente
+	}
+	req.Header.Set("User-Agent", "terminal-ia-updater")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return // Falla silenciosamente (sin internet)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return // Falla silenciosamente (ej. API rate limit)
+	}
+
+	var release GitHubRelease
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return // Falla silenciosamente (JSON corrupto)
+	}
+
+	if release.TagName != "" && release.TagName != currentVersion {
+		msg := fmt.Sprintf("\n%s\n", cSystem(fmt.Sprintf("  ¡Nueva versión %s disponible! (Estás en %s)", release.TagName, currentVersion)))
+		updateMessageChannel <- msg
+	}
+}
+
 
 // --- main (¡ACTUALIZADO!) ---
 func main() {
 	loadLogos()
 	createColorMap()
 	clearScreen()
+
+	go checkVersion()
 
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -260,7 +305,6 @@ func main() {
 	defer state.Close()
 	state.SetCtrlCAborts(true)
 
-	// Cargar historial
 	home, err := os.UserHomeDir()
 	if err == nil {
 		historyPath := filepath.Join(home, historyFileName)
@@ -269,7 +313,6 @@ func main() {
 			f.Close()
 		}
 	}
-	// Guardar historial al salir
 	defer saveHistory(state)
 
 
@@ -288,9 +331,15 @@ func main() {
 	var alwaysExecute bool = false
 	var isFirstLoop bool = true
 
-	// --- LÍNEA 'PopHistory' ELIMINADA ---
-
 	for {
+		// --- ¡LÓGICA DE ACTUALIZACIÓN DE VERSIÓN ---
+		select {
+			case updateMsg := <-updateMessageChannel:
+				fmt.Print(updateMsg) // Imprime el mensaje de forma segura
+			default:
+				// No hay mensaje, no bloquees
+		}
+
 		if isFirstLoop {
 			isFirstLoop = false
 			fmt.Println()
@@ -369,8 +418,6 @@ func main() {
 			printHeader()
 			fmt.Println(cSystem("\n  Consejo: Escribe /help para ver todos los comandos."))
 			isFirstLoop = true
-
-			// --- LÍNEAS 'PopHistory' ELIMINADAS ---
 			continue
 
 		} else if input == "/ask" {
