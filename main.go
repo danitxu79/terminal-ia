@@ -16,6 +16,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"bytes"
 
 	"github.com/ollama/ollama/api"
 
@@ -27,10 +28,11 @@ import (
 
 // --- Constantes del Programa ---
 const (
-	currentVersion  = "v19.2" // ¡ACTUALIZADO!
+	currentVersion  = "v20.0" // ¡ACTUALIZADO!
 	repoOwner       = "danitxu79"
 	repoName        = "terminal-ia"
 	historyFileName = ".terminal_ia_history"
+	debugSystemPrompt = "Eres un experto en depuración de comandos de Linux. Analiza el siguiente error de terminal (stderr), explica brevemente por qué ocurrió y proporciona una solución concisa que el usuario pueda copiar/pegar."
 )
 
 
@@ -588,12 +590,36 @@ func main() {
 			}
 
 		} else {
-			fmt.Println()
+			// --- ¡INICIO DE DEPURACIÓN INTELIGENTE DE ERRORES! ---
+
+			// 1. Ejecutar el comando de Shell
 			cmd := exec.Command("bash", "-c", input)
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			_ = cmd.Run()
+
+			// Necesitamos capturar el stderr para analizarlo, mientras lo mostramos al usuario.
+			var stdoutBuf, stderrBuf bytes.Buffer
+			// io.MultiWriter permite que los datos vayan a dos sitios: la terminal y nuestro buffer
+			cmd.Stdout = io.MultiWriter(os.Stdout, &stdoutBuf)
+			cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
+
+			fmt.Println() // Espacio antes de la ejecución
+
+			err := cmd.Run() // Ejecuta el comando
+
+			// 2. Comprobar si falló (código de salida distinto de 0)
+			if err != nil {
+				// La salida de error está en stderrBuf.
+				errorOutput := stderrBuf.String()
+
+				fmt.Println() // Espacio de aire
+				fmt.Println(cSystem("--- Análisis de Error de Shell ---"))
+
+				// 3. Llamar a la función de depuración
+				handleDebugCommand(client, selectedModel, errorOutput)
+			}
+
+			// Si no falló, o si la depuración terminó, añade un espacio
 			fmt.Println()
+			// --- ¡FIN DE DEPURACIÓN INTELIGENTE DE ERRORES! ---
 		}
 	}
 
@@ -958,4 +984,54 @@ func handleIACommandConfirm(client *api.Client, state *liner.State, modelName st
 			fmt.Println()
 			return false
 	}
+}
+
+// --- ¡NUEVA FUNCIÓN! handleDebugCommand ---
+// Captura el error de shell y pide una explicación a la IA
+func handleDebugCommand(client *api.Client, modelName string, errorOutput string) {
+	// Limitar el errorOutput para que no sea demasiado grande para el prompt
+	if len(errorOutput) > 2048 {
+		errorOutput = errorOutput[:2048] + "\n... (Error truncado)"
+	}
+
+	fullPrompt := fmt.Sprintf("%s\n\nError de Stderr:\n```\n%s\n```", debugSystemPrompt, errorOutput)
+
+	fmt.Println(cIA("IA> Analizando error...") + cSystem(" (Presiona Ctrl+C para cancelar)"))
+
+	// Lógica de cancelación
+	ctx, cancel := context.WithCancel(context.Background())
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT)
+	go func() {
+		<-sigChan
+		cancel()
+	}()
+	defer signal.Stop(sigChan)
+
+	stream := true
+	req := &api.GenerateRequest{
+		Model:  modelName,
+		Prompt: fullPrompt,
+		Stream: &stream,
+	}
+
+	firstChunk := true
+	streamHandler := func(r api.GenerateResponse) error {
+		if firstChunk {
+			fmt.Print("\r" + cIA("IA: ") + "    \r")
+			firstChunk = false
+		}
+		fmt.Print(r.Response)
+		return nil
+	}
+
+	err := client.Generate(ctx, req, streamHandler)
+
+	if err != nil && err != context.Canceled {
+		fmt.Println(cError(fmt.Sprintf("\nError al generar análisis: %v", err)))
+	} else if err == context.Canceled {
+		fmt.Print(cError("\n[Análisis cancelado]"))
+	}
+
+	fmt.Println() // Salto de línea después del análisis
 }
