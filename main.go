@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Daniel Serrano Armenta. Todos los derechos reservados.
+// Copyright (c) 2025 Daniel Serrano Armenta. dani.eus79@gmail.com Todos los derechos reservados.
 
 package main
 
@@ -32,7 +32,7 @@ import (
 
 // --- Constantes del Programa ---
 const (
-	currentVersion       = "v22.7" // ¡ACTUALIZADO!
+	currentVersion       = "v23.0" // ¡ACTUALIZADO!
 	repoOwner            = "danitxu79"
 	repoName             = "terminal-ia"
 	historyFileName      = ".terminal_ia_history"
@@ -54,6 +54,7 @@ var (
 	cModel  = color.New(color.FgMagenta).SprintFunc()
 
 	updateMessageChannel = make(chan string, 1)
+	githubLatestVersion  = currentVersion
 
 	// --- ¡NUEVO! Historial de Chat y Semántico ---
 	chatHistory []api.Message
@@ -187,8 +188,9 @@ func printHelp() {
 	fmt.Println(cPrompt("  /reset       ") + cIA("- Limpia el historial de la conversación de /chat."))
 	fmt.Println(cPrompt("  /tiempo <lugar>  ") + cIA("- Consulta el tiempo (sin API key) (ej. /tiempo Madrid)"))
 	fmt.Println(cPrompt("  /traducir <idioma> <texto> ") + cIA("- Traduce un texto (ej. /traducir fr hola)"))
-	fmt.Println(cPrompt("  /model       ") + cIA("- Vuelve a mostrar el selector de modelos."))
-	fmt.Println(cPrompt("  /ask         ") + cIA("- Desactiva el modo 'auto' y vuelve a pedir confirmación."))
+	fmt.Println(cPrompt("  /config      ") + cIA("- Menú de configuración: cambia modelo, modo auto, limpia historiales."))
+	fmt.Println(cPrompt("  /model       ") + cIA("- Acceso directo: Muestra el selector de modelos."))
+	fmt.Println(cPrompt("  /ask         ") + cIA("- Acceso directo: Desactiva el modo 'auto'."))
 	fmt.Println(cPrompt("  /help        ") + cIA("- Muestra este menú de ayuda."))
 	fmt.Println(cPrompt("  cd <dir>     ") + cIA("- Cambia el directorio actual (comando interno)."))
 	fmt.Println(cPrompt("  exit / quit  ") + cIA("- Cierra la terminal de IA (también Ctrl+D)."))
@@ -291,7 +293,7 @@ func saveHistory(state *liner.State) {
 	}
 }
 
-// checkVersion (Sin cambios)
+// checkVersion consulta la última versión en GitHub y la almacena.
 func checkVersion() {
 	client := &http.Client{Timeout: 3 * time.Second}
 	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", repoOwner, repoName)
@@ -312,9 +314,16 @@ func checkVersion() {
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
 		return
 	}
+
 	if release.TagName != "" {
+		// Normalizar versiones quitando la "v" inicial
 		remoteVersion := strings.TrimPrefix(strings.ToLower(release.TagName), "v")
 		localVersion := strings.TrimPrefix(strings.ToLower(currentVersion), "v")
+
+		// 1. Almacenar la versión de GitHub (sin la 'v')
+		githubLatestVersion = remoteVersion // <-- ¡ALMACENAR!
+
+		// 2. Notificar si hay una actualización
 		if remoteVersion != localVersion {
 			msg := fmt.Sprintf("\n%s\n", cSystem(fmt.Sprintf(
 				"  ¡Nueva versión %s disponible! (Estás en %s)",
@@ -512,6 +521,7 @@ func main() {
 			continue
 
 		} else if input == "/model" {
+			// El acceso directo debe ir al menú de elección directo, NO al menú de /config
 			selectedModel = chooseModel(client, state)
 			clearScreen()
 			msg := fmt.Sprintf("Cargando modelo \"%s\" en memoria...\n(Esto puede tardar unos segundos)", selectedModel)
@@ -530,14 +540,37 @@ func main() {
 			fmt.Println()
 			continue
 
-		} else if input == "/help" {
-			printHelp()
-			continue
-
 		} else if input == "/reset" {
 			chatHistory = nil
 			fmt.Println(cSystem("IA> Historial de chat limpiado."))
 			fmt.Println()
+			continue
+
+
+			// --- ¡NUEVO! Bloque /config (Centralizado) ---
+		} else if input == "/config" {
+			newModel, newAutoState := handleConfigCommand(client, state, selectedModel, alwaysExecute)
+
+			// Si el modelo cambió, forzamos la recarga de la UI y el calentamiento
+			if newModel != selectedModel {
+				selectedModel = newModel
+				clearScreen()
+				msg := fmt.Sprintf("Cargando modelo \"%s\" en memoria...\n(Esto puede tardar unos segundos)", selectedModel)
+				fmt.Println(cSystem(msg))
+				warmUpModel(client, selectedModel)
+				clearScreen()
+				printLogo(selectedModel)
+				printHeader()
+				fmt.Println(cSystem("\n  Consejo: Escribe /help para ver todos los comandos."))
+				isFirstLoop = true
+			}
+
+			alwaysExecute = newAutoState
+			continue
+			// --- Fin Bloque /config ---
+
+		} else if input == "/help" {
+			printHelp()
 			continue
 
 		} else if strings.HasPrefix(input, "/tiempo ") {
@@ -1384,4 +1417,109 @@ func getDirectorySnippet() string {
 		return strings.TrimSuffix(snippet.String(), ", ")
 	}
 	return ""
+}
+
+// handleConfigCommand gestiona el menú de configuración interactivo.
+// Devuelve el nuevo nombre del modelo y el nuevo estado de alwaysExecute.
+func handleConfigCommand(client *api.Client, state *liner.State, currentModel string, currentAutoState bool) (string, bool) {
+	fmt.Println()
+
+	// Bucle principal del menú
+	for {
+		// --- ¡ACTUALIZADO! Mostrar ambas versiones en la cabecera ---
+		versionInfo := fmt.Sprintf("Local: %s", currentVersion)
+		if githubLatestVersion != strings.TrimPrefix(strings.ToLower(currentVersion), "v") {
+			versionInfo += cError(fmt.Sprintf(" | GitHub: %s (¡ACTUALIZAR!)", githubLatestVersion))
+		} else {
+			versionInfo += cIA(" | GitHub: Al día")
+		}
+
+		fmt.Println(cSystem(fmt.Sprintf("--- Configuración de Terminal IA (%s) ---", versionInfo)))
+
+		// 1. Mostrar Estado Actual
+		autoState := cError("DESACTIVADO (Pedir Confirmación)")
+		if currentAutoState {
+			autoState = cIA("ACTIVADO (Auto-ejecución)")
+		}
+
+		fmt.Println(cPrompt(" [1] Modelo Actual: ") + cModel(currentModel))
+		fmt.Println(cPrompt(" [2] Modo Ejecución: ") + autoState)
+
+		// --- ¡ACTUALIZADO! Mostrar ambas versiones en Opción 3 ---
+		fmt.Println(cPrompt(" [3] Versión:        ") + versionInfo)
+
+		fmt.Println(cPrompt(" [4] Limpiar Historial Semántico"))
+		fmt.Println(cPrompt(" [5] Limpiar Historial de Chat"))
+		fmt.Println(cPrompt(" [Q] Salir del Menú de Configuración"))
+		fmt.Println(cSystem("------------------------------------------------"))
+
+		prompt := "Selecciona una opción [1-5, Q]: "
+		input, err := state.Prompt(prompt)
+		if err != nil || strings.ToLower(input) == "q" || err == liner.ErrPromptAborted {
+			fmt.Println(cSystem("\nSaliendo del menú de configuración."))
+			return currentModel, currentAutoState // Salir sin cambios
+		}
+
+		state.AppendHistory(input)
+		input = strings.TrimSpace(strings.ToLower(input))
+		fmt.Println()
+
+		switch input {
+			case "1":
+				// Cambiar Modelo (Reutilizar chooseModel)
+				newModel := chooseModel(client, state)
+
+				// Recalentar y actualizar la UI
+				fmt.Println(cSystem("Recargando modelo..."))
+				warmUpModel(client, newModel)
+				clearScreen()
+				printLogo(newModel)
+				printHeader()
+				fmt.Println(cSystem("\n  Consejo: Escribe /help para ver todos los comandos."))
+
+				return newModel, currentAutoState
+
+			case "2":
+				// Alternar Modo Auto/Ask
+				newAutoState := !currentAutoState
+				if newAutoState {
+					fmt.Println(cIA("IA> Modo auto-ejecución ACTIVADO."))
+				} else {
+					fmt.Println(cSystem("IA> Modo auto-ejecución DESACTIVADO. Se pedirá confirmación."))
+				}
+				fmt.Println()
+				return currentModel, newAutoState
+
+			case "3":
+				// Mostrar Versión (Confirmar la información ya mostrada)
+				fmt.Println(cSystem(fmt.Sprintf("Terminal IA versión local: %s.", currentVersion)))
+				if githubLatestVersion != strings.TrimPrefix(strings.ToLower(currentVersion), "v") {
+					fmt.Println(cError(fmt.Sprintf("¡ADVERTENCIA! La versión de GitHub (%s) es más reciente.", githubLatestVersion)))
+				}
+				fmt.Println()
+
+			case "4":
+				// Limpiar Historial Semántico
+				// (Limpiar el archivo y el slice en memoria)
+				semanticHistoryLock.Lock()
+				semanticHistory = make([]SemanticHistoryEntry, 0)
+				semanticHistoryLock.Unlock()
+
+				// Sobreescribir el archivo con un array vacío
+				os.WriteFile(semanticHistoryPath, []byte("[]"), 0644)
+
+				fmt.Println(cIA("IA> Historial Semántico limpiado."))
+				fmt.Println()
+
+			case "5":
+				// Limpiar Historial de Chat (Reutilizar lógica de /reset)
+				chatHistory = nil
+				fmt.Println(cIA("IA> Historial de Chat limpiado."))
+				fmt.Println()
+
+			default:
+				fmt.Println(cError("Opción inválida. Inténtalo de nuevo."))
+				fmt.Println()
+		}
+	}
 }

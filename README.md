@@ -91,6 +91,7 @@ Si ya tienes Ollama y solo quieres ejecutar el código fuente:
 | `/<petición>` | Envía una consulta de shell a la IA (ej. `/listar archivos .go`). |
 | `/buscar <intención> ` | Busca en el historial semántico (ej. `/buscar contar archivos go`). |
 | `/chat <pregunta>` | Inicia una conversación de chat (ej. `/chat ¿qué es Docker?`). |
+| `/config` | Menú interactivo para cambiar modelo, modo auto y limpiar historiales. |
 | `/reset` | Limpia el historial de la conversación de `/chat`. |
 | `/traducir <idioma> <texto>` | Traduce un texto (ej. `/traducir fr hola`). |
 | `/model` | Vuelve a mostrar el menú de selección de modelos. |
