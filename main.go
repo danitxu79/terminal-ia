@@ -280,10 +280,20 @@ func checkVersion() {
 		return
 	}
 
-	if release.TagName != "" && release.TagName != currentVersion {
-		msg := fmt.Sprintf("\n%s\n", cSystem(fmt.Sprintf("  ¡Nueva versión %s disponible! (Estás en %s)", release.TagName, currentVersion)))
-		updateMessageChannel <- msg
+	if release.TagName != "" {
+		// Normalizar versiones quitando la "v" inicial
+		remoteVersion := strings.TrimPrefix(strings.ToLower(release.TagName), "v")
+		localVersion := strings.TrimPrefix(strings.ToLower(currentVersion), "v")
+
+		if remoteVersion != localVersion {
+			msg := fmt.Sprintf("\n%s\n", cSystem(fmt.Sprintf(
+				"  ¡Nueva versión %s disponible! (Estás en %s)",
+									 release.TagName, currentVersion,
+			)))
+			updateMessageChannel <- msg
+		}
 	}
+
 }
 
 
@@ -306,43 +316,99 @@ func main() {
 
 	// --- ¡NUEVO! LÓGICA DE AUTO-COMPLETADO ---
 	state.SetCompleter(func(line string) (c []string) {
+		// --- 1. Definir comandos ---
+		// Comandos internos de la IA y comandos de shell comunes
 		commands := []string{
+			// Comandos IA
 			"/help",
 			"/chat ",
 			"/tiempo ",
 			"/traducir ",
 			"/model",
 			"/ask",
-			"cd ",
 			"exit",
 			"quit",
+			// Comandos Shell
+			"cd ",
+			"ls ",
+			"cat ",
+			"rm ",
+			"mv ",
+			"cp ",
+			"mkdir ",
+			"rmdir ",
+			"grep ",
+			"find ",
+			"chmod ",
+			"chown ",
+			"touch ",
+			"nano ",
+			"vim ",
+			"less ",
+			"go ", // <-- Ejemplos añadidos
+			"git ",
+			"docker ",
 		}
 
-		// Sugerencias de comandos
+		// --- 2. Sugerencias de comandos ---
+		// (La lógica original de sugerir comandos si la línea coincide)
 		for _, cmd := range commands {
 			if strings.HasPrefix(cmd, line) {
 				c = append(c, cmd)
 			}
 		}
 
-		// Autocompletar rutas si empieza con "cd "
-		if strings.HasPrefix(line, "cd ") {
-			dirPart := strings.TrimSpace(strings.TrimPrefix(line, "cd "))
-			if dirPart == "" {
-				dirPart = "./"
-			}
-			if !strings.HasSuffix(dirPart, "*") {
-				dirPart += "*"
+		// --- 3. Autocompletar rutas/archivos ---
+
+		// NO autocompletar rutas para estos comandos específicos
+		if strings.HasPrefix(line, "/chat ") ||
+			strings.HasPrefix(line, "/tiempo ") ||
+			strings.HasPrefix(line, "/traducir ") {
+				return c // Devuelve solo las sugerencias de comandos (si las hay)
 			}
 
-			files, _ := filepath.Glob(dirPart)
-			for _, f := range files {
-				if info, err := os.Stat(f); err == nil && info.IsDir() {
-					c = append(c, "cd "+f+"/")
-				}
-			}
+			// --- ¡NUEVA LÓGICA GENERALIZADA DE ARCHIVOS! ---
+			// Para 'cd' y TODOS los demás comandos, intentamos autocompletar archivos/rutas.
+			// Encontramos la parte de la ruta a completar (lo que va después del último espacio)
+
+			var pathPrefix string     // La línea hasta el último espacio (ej. "ls -l ")
+	var partToComplete string // La parte a 'glob' (ej. "mi_dir/")
+
+	lastSpace := strings.LastIndex(line, " ")
+	if lastSpace == -1 {
+		// Sin espacios. (ej. "mi_")
+		pathPrefix = ""
+		partToComplete = line
+	} else {
+		// Con espacios. (ej. "ls -l mi_")
+		pathPrefix = line[:lastSpace+1] // "ls -l "
+		partToComplete = line[lastSpace+1:] // "mi_"
+	}
+
+	// Construimos el patrón de glob
+	globPattern := partToComplete + "*"
+
+	// (Manejar el caso ~)
+	if strings.HasPrefix(globPattern, "~/") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			globPattern = filepath.Join(home, strings.TrimPrefix(globPattern, "~/"))
 		}
-		return
+	}
+
+	files, _ := filepath.Glob(globPattern)
+	for _, f := range files {
+		// Si es un directorio, añadir "/"
+		if info, err := os.Stat(f); err == nil && info.IsDir() {
+			// Añadimos la ruta completa (pathPrefix) + el archivo/dir encontrado
+			c = append(c, pathPrefix+f+"/")
+		} else {
+			// Es un archivo
+			c = append(c, pathPrefix+f)
+		}
+	}
+
+	return
 	})
 	// --- FIN DE LÓGICA DE AUTO-COMPLETADO ---
 
