@@ -7,6 +7,7 @@
 Un shell interactivo en Go que utiliza el poder de los modelos de Ollama para convertir lenguaje natural en comandos de terminal, directamente en tu flujo de trabajo.
 
 ![Captura de pantalla](https://github.com/danitxu79/terminal-ia/blob/master/Captura%2001.png)
+![Captura de pantalla 2](https://github.com/danitxu79/terminal-ia/blob/master/Captura%2002.png)
 
 ---
 
