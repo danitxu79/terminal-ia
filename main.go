@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math" // ¡NUEVO!
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -18,7 +18,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync" // ¡NUEVO!
+	"sync"
 	"syscall"
 	"time"
 
@@ -32,12 +32,13 @@ import (
 
 // --- Constantes del Programa ---
 const (
-	currentVersion       = "v23.0" // ¡ACTUALIZADO!
+	currentVersion       = "v24.0"
 	repoOwner            = "danitxu79"
 	repoName             = "terminal-ia"
 	historyFileName      = ".terminal_ia_history"
-	embeddingHistoryFile = ".terminal_ia_embeddings.json" // ¡NUEVO!
+	embeddingHistoryFile = ".terminal_ia_embeddings.json"
 	debugSystemPrompt    = "Eres un experto en depuración de comandos de Linux. Analiza el siguiente error de terminal (stderr), explica brevemente por qué ocurrió y proporciona una solución concisa que el usuario pueda copiar/pegar."
+	embeddingModelName   = "nomic-embed-text"
 )
 
 // --- Estructuras y Variables Globales de Estilo ---
@@ -56,7 +57,7 @@ var (
 	updateMessageChannel = make(chan string, 1)
 	githubLatestVersion  = currentVersion
 
-	// --- ¡NUEVO! Historial de Chat y Semántico ---
+	// Historial de Chat y Semántico
 	chatHistory []api.Message
 
 	semanticHistory     []SemanticHistoryEntry
@@ -64,13 +65,13 @@ var (
 	semanticHistoryLock sync.Mutex // Mutex para proteger el acceso al historial
 )
 
-// --- ¡NUEVO! Struct para Historial Semántico ---
+// Struct para Historial Semántico
 type SemanticHistoryEntry struct {
 	Command   string    `json:"command"`
 	Embedding []float64 `json:"embedding"`
 }
 
-// Structs para APIs (Sin cambios)
+// Structs para APIs
 type WttrWeatherDesc struct {
 	Value string `json:"value"`
 }
@@ -94,12 +95,12 @@ type GitHubRelease struct {
 	TagName string `json:"tag_name"`
 }
 
-// clearScreen (Sin cambios)
+// clearScreen
 func clearScreen() {
 	fmt.Print("\033[2J\033[H")
 }
 
-// loadLogos (Sin cambios)
+// loadLogos
 func loadLogos() {
 	file, err := os.Open("logos.json")
 	if err != nil {
@@ -117,7 +118,7 @@ func loadLogos() {
 	}
 }
 
-// createColorMap (Sin cambios)
+// createColorMap
 func createColorMap() {
 	colorMap = map[string][]string{
 		"llama":    {"#B721FF", "#21D4FD"},
@@ -131,7 +132,7 @@ func createColorMap() {
 	}
 }
 
-// getLogoKey (Sin cambios)
+// getLogoKey
 func getLogoKey(modelName string) string {
 	lowerName := strings.ToLower(modelName)
 	for key := range logoMap {
@@ -142,7 +143,7 @@ func getLogoKey(modelName string) string {
 	return "default"
 }
 
-// printLogo (Sin cambios)
+// printLogo
 func printLogo(modelName string) {
 	logoKey := getLogoKey(modelName)
 	logoLines, ok := logoMap[logoKey]
@@ -169,7 +170,7 @@ func printLogo(modelName string) {
 	}
 }
 
-// printHeader (Sin cambios)
+// printHeader
 func printHeader() {
 	fmt.Println()
 	fmt.Println(styleHeader.Render(fmt.Sprintf("  Terminal Aumentada por IA (%s)", currentVersion)))
@@ -178,7 +179,7 @@ func printHeader() {
 	fmt.Println(styleHeader.Render(fmt.Sprintf("  Github: https://github.com/%s/%s", repoOwner, repoName)))
 }
 
-// --- printHelp (¡ACTUALIZADO!) ---
+// --- printHelp ---
 func printHelp() {
 	fmt.Println()
 	fmt.Println(cSystem("--- Ayuda: Comandos Disponibles ---"))
@@ -198,54 +199,159 @@ func printHelp() {
 	fmt.Println()
 }
 
-// warmUpModel (¡ACTUALIZADO CON KEEP-ALIVE Y EMBEDDINGS!)
+// --- Ollama Management Functions ---
+
+// checkOllamaService intenta conectar y verificar que Ollama esté corriendo y accesible.
+// Además, asegura que el modelo de Embeddings dedicado esté instalado.
+func checkOllamaService(client *api.Client) error {
+	maxAttempts := 3
+	delay := 2 * time.Second
+
+	// 1. Verificar la conexión al servicio Ollama
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_, err := client.List(ctx)
+		cancel()
+
+		if err == nil {
+			fmt.Println(cIA("IA> Ollama encontrado y activo."))
+
+			// 2. Si hay conexión, procedemos a verificar los modelos esenciales.
+			return ensureEssentialModels(client)
+		}
+
+		if attempt < maxAttempts-1 {
+			fmt.Printf(cError("Advertencia: No se pudo conectar a Ollama (Intento %d/%d). Reintentando en %s...\n"), attempt+1, maxAttempts, delay)
+			time.Sleep(delay)
+		} else {
+			return fmt.Errorf("fallo al conectar con Ollama después de %d intentos. Asegúrate de que el servicio esté corriendo (ej. 'ollama start' o 'ollama run'). Error: %v", maxAttempts, err)
+		}
+	}
+	return nil
+}
+
+// ensureEssentialModels verifica que el modelo de Embeddings esté presente, descargándolo si es necesario.
+func ensureEssentialModels(client *api.Client) error {
+	ctx := context.Background()
+	resp, err := client.List(ctx)
+	if err != nil {
+		return fmt.Errorf("fallo al listar modelos después de conectar: %v", err)
+	}
+
+	modelExists := false
+	for _, model := range resp.Models {
+		if strings.Contains(model.Name, embeddingModelName) {
+			modelExists = true
+			break
+		}
+	}
+
+	if !modelExists {
+		fmt.Println(cError(fmt.Sprintf("¡ADVERTENCIA! El modelo de Embeddings (%s) es esencial para /buscar y no está instalado.", embeddingModelName)))
+		fmt.Println(cSystem(fmt.Sprintf("Intentando descargarlo automáticamente (ollama pull %s)...", embeddingModelName)))
+
+		// Ejecutar el comando de descarga de Ollama
+		cmd := exec.Command("ollama", "pull", embeddingModelName)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("falló la descarga de %s. Por favor, ejecuta 'ollama pull %s' manualmente. Error: %v", embeddingModelName, embeddingModelName, err)
+		}
+
+		fmt.Println(cIA("IA> Descarga de Embeddings completa."))
+	}
+
+	return nil
+}
+
+// warmUpModel calienta el modelo de Chat (user selected) y el modelo de Embeddings.
 func warmUpModel(client *api.Client, modelName string) {
 	ctx := context.Background()
 
-	// Omitir KeepAlive por ahora para evitar problemas de conversión
-	// O usar nil si no es obligatorio
-
-	// --- 2. Pre-calentar el endpoint 'generate' (/ , /chat, /traducir, /debug) ---
+	// --- 1. Pre-calentar el endpoint 'generate' (Modelo de Chat) ---
 	reqGen := &api.GenerateRequest{
-		Model:     modelName,
+		Model:     modelName, // Modelo de chat seleccionado por el usuario
 		Prompt:    "hola",
 		Stream:    new(bool),
-		// KeepAlive: nil, // Comentar o dejar en nil temporalmente
 	}
 	genHandler := func(r api.GenerateResponse) error { return nil }
 
 	if err := client.Generate(ctx, reqGen, genHandler); err != nil {
-		fmt.Fprintln(os.Stderr, cError(fmt.Sprintf("Advertencia: Fallo al 'calentar' (generate): %v", err)))
+		fmt.Fprintln(os.Stderr, cError(fmt.Sprintf("Advertencia: Fallo al 'calentar' (generate - %s): %v", modelName, err)))
 	}
 
-	// --- 3. Pre-calentar el endpoint 'embeddings' (/buscar) ---
+	// --- 2. Pre-calentar el endpoint 'embeddings' (Modelo Dedicado) ---
 	reqEmb := &api.EmbeddingRequest{
-		Model:     modelName,
+		Model:     embeddingModelName, // Modelo dedicado
 		Prompt:    "hola",
-		// KeepAlive: nil,
 	}
 
 	if _, err := client.Embeddings(ctx, reqEmb); err != nil {
-		fmt.Fprintln(os.Stderr, cError(fmt.Sprintf("Advertencia: Fallo al 'calentar' (embeddings): %v", err)))
+		fmt.Fprintln(os.Stderr, cError(fmt.Sprintf("Advertencia: Fallo al 'calentar' (embeddings - %s): %v", embeddingModelName, err)))
 	}
 }
 
-// chooseModel (Sin cambios)
+// chooseModel (ACTUALIZADO: Incluye Descarga de Emergencia de CHAT y Filtro de Embeddings)
 func chooseModel(client *api.Client, state *liner.State) string {
 	fmt.Println(cSystem("Consultando modelos de Ollama disponibles..."))
 
 	ctx := context.Background()
 	resp, err := client.List(ctx)
 	if err != nil {
+		// Asumimos que checkOllamaService ya manejó la conexión.
 		log.Fatal(cError(fmt.Sprintf("Error fatal: No se pudo listar los modelos de Ollama: %v", err)))
 	}
-	if len(resp.Models) == 0 {
-		log.Fatal(cError("Error fatal: No tienes ningún modelo de Ollama descargado. (Usa 'ollama pull ...')"))
+
+	// --- Descarga de Emergencia para el Modelo de CHAT ---
+
+	// Filtramos temporalmente los modelos para ver si solo queda el de embeddings.
+	var currentChatModels []api.ListModelResponse
+	for _, model := range resp.Models {
+		if !strings.Contains(model.Name, embeddingModelName) {
+			currentChatModels = append(currentChatModels, model)
+		}
 	}
+
+	if len(currentChatModels) == 0 {
+		fmt.Println(cError("¡ADVERTENCIA! No se encontraron modelos de CHAT descargados."))
+		fmt.Println(cSystem("Intentando descargar el modelo predeterminado 'llama3:8b' automáticamente..."))
+
+		cmd := exec.Command("ollama", "pull", "llama3:8b")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		if err := cmd.Run(); err != nil {
+			log.Fatal(cError(fmt.Sprintf("Error fatal: Falló la descarga automática. Ejecuta 'ollama pull llama3:8b' manualmente. Error: %v", err)))
+		}
+
+		// Reintentar la lista de modelos para actualizar la UI
+		resp, err = client.List(ctx)
+		if err != nil {
+			log.Fatal(cError("Error fatal: Fallo al re-listar modelos después de la descarga."))
+		}
+
+		// Volvemos a filtrar la lista actualizada
+		currentChatModels = nil
+		for _, model := range resp.Models {
+			if !strings.Contains(model.Name, embeddingModelName) {
+				currentChatModels = append(currentChatModels, model)
+			}
+		}
+
+		if len(currentChatModels) == 0 {
+			log.Fatal(cError("Error fatal: La descarga tuvo éxito, pero el modelo de CHAT sigue sin estar disponible. Reinicia la aplicación."))
+		}
+
+		fmt.Println(cIA("Descarga de CHAT completa. Modelos disponibles:"))
+	}
+	// --- Fin de la Descarga de Emergencia para CHAT ---
+
 
 	fmt.Println(cSystem("--- Elige un modelo de IA ---"))
 	fmt.Println(cSystem("------------------------------"))
-	for i, model := range resp.Models {
+
+	for i, model := range currentChatModels {
 		fmt.Printf("%d: %s\n", i+1, model.Name)
 	}
 	fmt.Println(cSystem("------------------------------"))
@@ -262,17 +368,17 @@ func chooseModel(client *api.Client, state *liner.State) string {
 		}
 
 		choice, err = strconv.Atoi(strings.TrimSpace(input))
-		if err != nil || choice < 1 || choice > len(resp.Models) {
+		if err != nil || choice < 1 || choice > len(currentChatModels) {
 			fmt.Println(cError("Selección inválida. Introduce un número de la lista."))
 		} else {
 			state.AppendHistory(input)
 			break
 		}
 	}
-	return resp.Models[choice-1].Name
+	return currentChatModels[choice-1].Name
 }
 
-// saveHistory (Sin cambios)
+// saveHistory
 func saveHistory(state *liner.State) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -334,7 +440,7 @@ func checkVersion() {
 	}
 }
 
-// --- main (¡ACTUALIZADO!) ---
+// --- main ---
 func main() {
 	loadLogos()
 	createColorMap()
@@ -347,16 +453,23 @@ func main() {
 		log.Fatal(cError(fmt.Sprintf("Error fatal: No se pudo crear el cliente de Ollama: %v", err)))
 	}
 
+	// --- Comprobación del servicio Ollama (Health Check) ---
+	fmt.Println(cSystem("Verificando el servicio Ollama..."))
+	if err := checkOllamaService(client); err != nil {
+		log.Fatal(cError(fmt.Sprintf("\nError fatal: %v\n", err)))
+	}
+	// --- Fin Comprobación ---
+
 	state := liner.NewLiner()
 	defer state.Close()
 	state.SetCtrlCAborts(true)
 
-	// --- LÓGICA DE AUTO-COMPLETADO (¡ACTUALIZADO!) ---
+	// --- LÓGICA DE AUTO-COMPLETADO ---
 	state.SetCompleter(func(line string) (c []string) {
 		commands := []string{
 			"/help",
 			"/chat ",
-			"/buscar ", // <-- ¡Añadido!
+			"/buscar ",
 			"/reset",
 			"/tiempo ",
 			"/traducir ",
@@ -377,7 +490,7 @@ func main() {
 
 		// NO autocompletar rutas para estos comandos
 		if strings.HasPrefix(line, "/chat ") ||
-			strings.HasPrefix(line, "/buscar ") || // <-- ¡Añadido!
+			strings.HasPrefix(line, "/buscar ") ||
 			strings.HasPrefix(line, "/tiempo ") ||
 			strings.HasPrefix(line, "/traducir ") {
 				return c
@@ -422,14 +535,12 @@ func main() {
 			state.ReadHistory(f)
 			f.Close()
 		}
-		// --- ¡NUEVO! Cargar historial semántico ---
+		// Cargar historial semántico
 		semanticHistoryPath = filepath.Join(home, embeddingHistoryFile)
 		loadSemanticHistory()
 		fmt.Printf(cSystem("Cargados %d comandos del historial semántico.\n"), len(semanticHistory))
-		// --- Fin ---
 	}
 	defer saveHistory(state)
-	// Nota: El historial semántico se guarda en cada adición, no al salir.
 
 	selectedModel := chooseModel(client, state)
 
@@ -521,7 +632,7 @@ func main() {
 			continue
 
 		} else if input == "/model" {
-			// El acceso directo debe ir al menú de elección directo, NO al menú de /config
+			// Acceso directo: Muestra el selector de modelos.
 			selectedModel = chooseModel(client, state)
 			clearScreen()
 			msg := fmt.Sprintf("Cargando modelo \"%s\" en memoria...\n(Esto puede tardar unos segundos)", selectedModel)
@@ -535,20 +646,21 @@ func main() {
 			continue
 
 		} else if input == "/ask" {
+			// Acceso directo: Desactiva el modo 'auto'.
 			alwaysExecute = false
 			fmt.Println(cSystem("IA> Modo auto-ejecución desactivado. Se pedirá confirmación."))
 			fmt.Println()
 			continue
 
 		} else if input == "/reset" {
+			// Acceso directo: Limpia el historial de chat.
 			chatHistory = nil
 			fmt.Println(cSystem("IA> Historial de chat limpiado."))
 			fmt.Println()
 			continue
 
-
-			// --- ¡NUEVO! Bloque /config (Centralizado) ---
 		} else if input == "/config" {
+			// Comando central: Menú de configuración.
 			newModel, newAutoState := handleConfigCommand(client, state, selectedModel, alwaysExecute)
 
 			// Si el modelo cambió, forzamos la recarga de la UI y el calentamiento
@@ -567,7 +679,6 @@ func main() {
 
 			alwaysExecute = newAutoState
 			continue
-			// --- Fin Bloque /config ---
 
 		} else if input == "/help" {
 			printHelp()
@@ -603,7 +714,6 @@ func main() {
 			}
 			handleChatCommand(client, selectedModel, prompt)
 
-			// --- ¡NUEVO! Bloque /buscar ---
 		} else if strings.HasPrefix(input, "/buscar ") {
 			query := strings.TrimPrefix(input, "/buscar ")
 			query = strings.TrimSpace(query)
@@ -616,7 +726,6 @@ func main() {
 			if handleSearchCommand(client, state, selectedModel, query) {
 				alwaysExecute = true
 			}
-			// --- Fin ---
 
 		} else if strings.HasPrefix(input, "/") {
 			prompt := strings.TrimPrefix(input, "/")
@@ -635,7 +744,7 @@ func main() {
 			}
 
 		} else {
-			// --- INICIO DE DEPURACIÓN INTELIGENTE DE ERRORES (¡ACTUALIZADO!) ---
+			// --- INICIO DE DEPURACIÓN INTELIGENTE DE ERRORES ---
 			finalInput := input
 			if shouldColorOutput(input) {
 				firstSpace := strings.Index(input, " ")
@@ -656,10 +765,9 @@ func main() {
 			fmt.Println()
 			err := cmd.Run()
 
-			// --- ¡NUEVO! Guardar en historial semántico ---
+			// Guardar en historial semántico
 			if err == nil {
 				// Solo guardar si el comando fue exitoso
-				// Se ejecuta en gorutina para no bloquear el prompt
 				go addCommandToSemanticHistory(client, selectedModel, finalInput)
 			} else {
 				// El comando falló, analizar el error
@@ -668,7 +776,6 @@ func main() {
 				fmt.Println(cSystem("--- Análisis de Error de Shell ---"))
 				handleDebugCommand(client, selectedModel, errorOutput)
 			}
-			// --- Fin ---
 
 			fmt.Println()
 			// --- FIN DE DEPURACIÓN INTELIGENTE DE ERRORES! ---
@@ -679,13 +786,11 @@ func main() {
 }
 
 // sanitizeIACommand limpia y prepara el comando sugerido por la IA para su ejecución.
-// Ahora soporta comandos multi-línea.
 func sanitizeIACommand(rawCmd string) string {
 	cmd := strings.TrimSpace(rawCmd)
 
 	// Caso 1: Bloque de código con 3 backticks (```bash ... ```)
 	if strings.HasPrefix(cmd, "```") && strings.HasSuffix(cmd, "```") {
-		// Eliminar ``` inicial y final
 		cmd = strings.TrimPrefix(cmd, "```")
 		cmd = strings.TrimSuffix(cmd, "```")
 
@@ -698,7 +803,7 @@ func sanitizeIACommand(rawCmd string) string {
 			cmd = strings.TrimPrefix(cmd, "shell\n")
 		}
 
-		return strings.TrimSpace(cmd) // Devolvemos el contenido limpio
+		return strings.TrimSpace(cmd)
 	}
 
 	// Caso 2: Comando con un solo backtick (`...`)
@@ -709,11 +814,10 @@ func sanitizeIACommand(rawCmd string) string {
 	}
 
 	// Caso 3: Comando simple o multi-línea sin backticks.
-	// Bash lo manejará correctamente si usamos 'bash -c' con saltos de línea/puntos y comas.
 	return cmd
 }
 
-// handleWeatherCommand (Sin cambios)
+// handleWeatherCommand
 func handleWeatherCommand(client *api.Client, modelName string, location string) {
 	fmt.Println(cIA("IA> Consultando el tiempo...") + cSystem(" (Usando wttr.in)"))
 	endpoint := fmt.Sprintf("http://wttr.in/%s?format=j1", url.QueryEscape(location))
@@ -800,7 +904,7 @@ func handleWeatherCommand(client *api.Client, modelName string, location string)
 	fmt.Println()
 }
 
-// handleChatCommand (Sin cambios)
+// handleChatCommand
 func handleChatCommand(client *api.Client, modelName string, userPrompt string) {
 	if len(chatHistory) == 0 {
 		chatHistory = append(chatHistory, api.Message{
@@ -860,7 +964,7 @@ func handleChatCommand(client *api.Client, modelName string, userPrompt string) 
 	fmt.Println()
 }
 
-// handleTranslateCommand (Sin cambios)
+// handleTranslateCommand
 func handleTranslateCommand(client *api.Client, modelName string, userPrompt string) {
 	parts := strings.SplitN(userPrompt, " ", 2)
 	if len(parts) < 2 {
@@ -909,7 +1013,7 @@ func handleTranslateCommand(client *api.Client, modelName string, userPrompt str
 	fmt.Println()
 }
 
-// handleIACommandAuto (Sin cambios)
+// handleIACommandAuto
 func handleIACommandAuto(client *api.Client, modelName string, userPrompt string) {
 	// 1. Obtener contexto de archivos
 	dirSnippet := getDirectorySnippet()
@@ -958,7 +1062,7 @@ func handleIACommandAuto(client *api.Client, modelName string, userPrompt string
 	fmt.Println()
 }
 
-// handleIACommandConfirm (Sin cambios)
+// handleIACommandConfirm
 func handleIACommandConfirm(client *api.Client, state *liner.State, modelName string, userPrompt string) bool {
 	// 1. Obtener contexto de archivos
 	dirSnippet := getDirectorySnippet()
@@ -1038,7 +1142,6 @@ func handleIACommandConfirm(client *api.Client, state *liner.State, modelName st
 			}
 			fmt.Println()
 			fmt.Println(cSystem("IA> Modo auto-ejecución activado. Escribe '/ask' para desactivarlo."))
-			fmt.Println()
 			return true
 		default:
 			fmt.Println(cSystem("IA> Cancelado."))
@@ -1047,7 +1150,7 @@ func handleIACommandConfirm(client *api.Client, state *liner.State, modelName st
 	}
 }
 
-// handleDebugCommand (Sin cambios)
+// handleDebugCommand
 func handleDebugCommand(client *api.Client, modelName string, errorOutput string) {
 	if len(errorOutput) > 2048 {
 		errorOutput = errorOutput[:2048] + "\n... (Error truncado)"
@@ -1086,7 +1189,7 @@ func handleDebugCommand(client *api.Client, modelName string, errorOutput string
 	fmt.Println()
 }
 
-// shouldColorOutput (Sin cambios)
+// shouldColorOutput
 func shouldColorOutput(cmd string) bool {
 	cmd = strings.TrimSpace(cmd)
 	if cmd == "" {
@@ -1134,11 +1237,10 @@ func cosineSimilarity(a, b []float64) float64 {
 	return dotProduct(a, b) / (magA * magB)
 }
 
-// getEmbedding llama a la API de Ollama para un texto dado
+// getEmbedding llama a la API de Ollama para un texto dado usando el modelo DEDICADO.
 func getEmbedding(client *api.Client, text string, model string) ([]float64, error) {
-	// ¡CORREGIDO! Usa EmbeddingRequest (singular)
 	req := &api.EmbeddingRequest{
-		Model:  model, // Usar el modelo actual (o uno dedicado si se prefiere)
+		Model:  embeddingModelName, // <-- ¡USAR MODELO DEDICADO!
 		Prompt: text,
 	}
 	ctx := context.Background()
@@ -1146,7 +1248,6 @@ func getEmbedding(client *api.Client, text string, model string) ([]float64, err
 	if err != nil {
 		return nil, err
 	}
-	// ¡CORREGIDO! Devuelve directamente resp.Embedding (que ya es []float64)
 	return resp.Embedding, nil
 }
 
@@ -1157,7 +1258,7 @@ func loadSemanticHistory() {
 
 	if _, err := os.Stat(semanticHistoryPath); os.IsNotExist(err) {
 		semanticHistory = make([]SemanticHistoryEntry, 0)
-		return // Archivo no existe, empezar de cero
+		return
 	}
 
 	data, err := os.ReadFile(semanticHistoryPath)
@@ -1188,8 +1289,7 @@ func saveSemanticHistory() {
 	}
 }
 
-// addCommandToSemanticHistory (El proceso de "Memoria")
-// Se ejecuta en una gorutina para no bloquear el prompt
+// addCommandToSemanticHistory
 func addCommandToSemanticHistory(client *api.Client, model string, command string) {
 	// No guardar comandos vacíos, de historial, o el propio 'buscar'
 	if command == "" || strings.HasPrefix(command, "/") || strings.HasPrefix(command, "cd ") {
@@ -1201,7 +1301,7 @@ func addCommandToSemanticHistory(client *api.Client, model string, command strin
 	for _, entry := range semanticHistory {
 		if entry.Command == command {
 			semanticHistoryLock.Unlock()
-			return // Ya existe
+			return
 		}
 	}
 	semanticHistoryLock.Unlock() // Desbloquear antes de la llamada de red
@@ -1227,8 +1327,7 @@ func addCommandToSemanticHistory(client *api.Client, model string, command strin
 	saveSemanticHistory() // Guardar el archivo
 }
 
-// handleSearchCommand (ACTUALIZADO: Muestra y permite seleccionar el Top 3)
-// Devuelve un bool 'setAuto' (igual que handleIACommandConfirm)
+// handleSearchCommand (Muestra y permite seleccionar el Top 3)
 func handleSearchCommand(client *api.Client, state *liner.State, model string, query string) bool {
 	fmt.Println(cIA("IA> Buscando en historial semántico...") + cSystem(" (Presiona Ctrl+C para cancelar)"))
 
@@ -1420,13 +1519,12 @@ func getDirectorySnippet() string {
 }
 
 // handleConfigCommand gestiona el menú de configuración interactivo.
-// Devuelve el nuevo nombre del modelo y el nuevo estado de alwaysExecute.
 func handleConfigCommand(client *api.Client, state *liner.State, currentModel string, currentAutoState bool) (string, bool) {
 	fmt.Println()
 
 	// Bucle principal del menú
 	for {
-		// --- ¡ACTUALIZADO! Mostrar ambas versiones en la cabecera ---
+		// --- Mostrar ambas versiones en la cabecera ---
 		versionInfo := fmt.Sprintf("Local: %s", currentVersion)
 		if githubLatestVersion != strings.TrimPrefix(strings.ToLower(currentVersion), "v") {
 			versionInfo += cError(fmt.Sprintf(" | GitHub: %s (¡ACTUALIZAR!)", githubLatestVersion))
@@ -1445,7 +1543,7 @@ func handleConfigCommand(client *api.Client, state *liner.State, currentModel st
 		fmt.Println(cPrompt(" [1] Modelo Actual: ") + cModel(currentModel))
 		fmt.Println(cPrompt(" [2] Modo Ejecución: ") + autoState)
 
-		// --- ¡ACTUALIZADO! Mostrar ambas versiones en Opción 3 ---
+		// --- Mostrar ambas versiones en Opción 3 ---
 		fmt.Println(cPrompt(" [3] Versión:        ") + versionInfo)
 
 		fmt.Println(cPrompt(" [4] Limpiar Historial Semántico"))
