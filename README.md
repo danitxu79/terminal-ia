@@ -100,24 +100,31 @@ Si ya tienes Ollama y solo quieres ejecutar el código fuente:
 | `cd <directorio>` | Cambia de directorio (manejado internamente). |
 | `exit` o `Ctrl+D` | Cierra la terminal de IA. |
 
+
 ## 📜 Licencia
 
-Este proyecto se ofrece bajo un modelo de **Doble Licencia** (Dual License) para proveer flexibilidad:
+Este proyecto se ofrece bajo un modelo de Doble Licencia (Dual License), brindando máxima flexibilidad:
 
-### 1. Licencia Pública (Uso Comunitario y No Comercial)
+1. Licencia Pública (LGPLv3)
 
-El código está disponible bajo la **GNU Lesser General Public License v3 (LGPLv3)**.
+Este software está disponible bajo la GNU Lesser General Public License v3.0 (LGPLv3).
+Puedes usarlo libremente de acuerdo con los términos de la LGPLv3, lo cual es ideal para proyectos de código abierto. En resumen, esto significa que si usas esta biblioteca (especialmente si la modificas), debes cumplir con las obligaciones de la LGPLv3, como publicar el código fuente de tus modificaciones a esta biblioteca y permitir que los usuarios la reemplacen.
+Puedes encontrar el texto completo de la licencia en el archivo LICENSE de este repositorio.
 
-* **Permite:** Uso, modificación y distribución gratuita (ideal para proyectos personales, educativos y no lucrativos).
-* **Restringe:** Las modificaciones al código principal deben mantenerse abiertas bajo la misma licencia (copyleft).
+2. Licencia Comercial (Privativa)
 
-Ver el archivo `LICENSE` para más detalles.
+Si los términos de la LGPLv3 no se ajustan a tus necesidades, ofrezco una licencia comercial alternativa.
+Necesitarás una licencia comercial si, por ejemplo:
 
-### 2. Licencia Propietaria (Uso Comercial y Lucrativo)
+    Deseas incluir el código en un software propietario (código cerrado) sin tener que publicar tus modificaciones.
+    Necesitas enlazar estáticamente (static linking) la biblioteca con tu aplicación propietaria.
+    Prefieres no estar sujeto a las obligaciones y restricciones de la LGPLv3.
 
-Las partes que deseen utilizar este software para fines comerciales o lucrativos, o que deseen evitar las restricciones de *copyleft* de la LGPLv3, deben adquirir una **Licencia Comercial Propietaria** directamente del autor.
+La licencia comercial te otorga el derecho a usar el código en tus aplicaciones comerciales de código cerrado sin las restricciones de la LGPLv3, a cambio de una tarifa.
+Para adquirir una licencia comercial o para más información, por favor, pónte en contacto conmigo en:
 
-Para obtener una licencia comercial y discutir los términos de pago, por favor contacte a Daniel Serrano Armenta en `dani.eus79@gmail.com`.
+dani.eus79@gmail.com
+
 
 ## ✉️ Contacto
 
@@ -125,3 +132,4 @@ Creado por **Daniel Serrano Armenta**
 
 * `dani.eus79@gmail.com`
 * Encuéntrame en GitHub: `@danitxu79`
+* Portafolio: `https://danitxu79.github.io/`
