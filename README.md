@@ -103,27 +103,29 @@ Si ya tienes Ollama y solo quieres ejecutar el código fuente:
 
 ## 📜 Licencia
 
-Este proyecto se ofrece bajo un modelo de Doble Licencia (Dual License), brindando máxima flexibilidad:
+Este proyecto se ofrece bajo un modelo de licenciamiento dual:
 
-1. Licencia Pública (LGPLv3)
+### 1\. Licencia Pública (LGPLv3)
 
-Este software está disponible bajo la GNU Lesser General Public License v3.0 (LGPLv3).
+Este software está disponible bajo la **GNU Lesser General Public License v3.0 (LGPLv3)**.
+
 Puedes usarlo libremente de acuerdo con los términos de la LGPLv3, lo cual es ideal para proyectos de código abierto. En resumen, esto significa que si usas esta biblioteca (especialmente si la modificas), debes cumplir con las obligaciones de la LGPLv3, como publicar el código fuente de tus modificaciones a esta biblioteca y permitir que los usuarios la reemplacen.
-Puedes encontrar el texto completo de la licencia en el archivo LICENSE de este repositorio.
 
-2. Licencia Comercial (Privativa)
+Puedes encontrar el texto completo de la licencia en el archivo `LICENSE` de este repositorio.
+
+### 2\. Licencia Comercial (Privativa)
 
 Si los términos de la LGPLv3 no se ajustan a tus necesidades, ofrezco una licencia comercial alternativa.
+
 Necesitarás una licencia comercial si, por ejemplo:
 
-    Deseas incluir el código en un software propietario (código cerrado) sin tener que publicar tus modificaciones.
-    Necesitas enlazar estáticamente (static linking) la biblioteca con tu aplicación propietaria.
-    Prefieres no estar sujeto a las obligaciones y restricciones de la LGPLv3.
+  * Deseas incluir el código en un software propietario (código cerrado) sin tener que publicar tus modificaciones.
+  * Necesitas enlazar estáticamente (static linking) la biblioteca con tu aplicación propietaria.
+  * Prefieres no estar sujeto a las obligaciones y restricciones de la LGPLv3.
 
 La licencia comercial te otorga el derecho a usar el código en tus aplicaciones comerciales de código cerrado sin las restricciones de la LGPLv3, a cambio de una tarifa.
-Para adquirir una licencia comercial o para más información, por favor, pónte en contacto conmigo en:
 
-dani.eus79@gmail.com
+Para adquirir una licencia comercial o para más información, por favor, pónte en contacto conmigo:
 
 
 ## ✉️ Contacto
